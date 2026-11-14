@@ -1,4 +1,6 @@
 versiones_y_errores/
+resumenes_ver_reglas/
+last_sync_snapshot.txt
 .venv/
 venv/
 __pycache__/
