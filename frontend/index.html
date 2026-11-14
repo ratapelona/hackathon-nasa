@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NASA Microgravity Fire Risk — Simulador Dual WebGPU</title>
+  <style>
+    :root { --bg:#0b1020; --card:#141c33; --accent:#38bdf8; --text:#e2e8f0; --muted:#94a3b8; --ok:#22c55e; --warn:#f59e0b; --crit:#ef4444; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 1.5vh 2.5vw; }
+    header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 1.5vh; }
+    h1 { font-size: 1.35rem; margin: 0; color: var(--accent); }
+    h2 { font-size: 1.05rem; margin: 0 0 0.6rem 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); gap: 1.4vw; }
+    .panel { background: var(--card); border-radius: 0.75rem; padding: 1.1rem; border: 0.0625rem solid #26324d; }
+    label { display: block; font-size: 0.82rem; color: var(--muted); margin-top: 0.5rem; }
+    input, select, button { width: 100%; padding: 0.5rem 0.7rem; margin-top: 0.2rem; border-radius: 0.5rem; border: 0.0625rem solid #334155; background: #0f172a; color: var(--text); font-size: 0.88rem; }
+    button { background: var(--accent); color: #09111f; font-weight: 700; cursor: pointer; margin-top: 0.65rem; }
+    button.secondary { background: #1e293b; color: var(--text); width: auto; }
+    button.active { background: var(--accent); color: #09111f; }
+    .row-inline { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.4rem; }
+    .row-inline > input[type="range"], .row-inline > select { flex: 1; }
+    .row-inline > input[type="number"] { width: 5.5rem; }
+    .view-bar { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.65rem; align-items: center; }
+    .viewport-grid { display: grid; gap: 0.65rem; grid-template-columns: 1fr; }
+    .viewport-grid.dual { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+    .canvas-box { background: #070b16; border: 0.0625rem solid #243047; border-radius: 0.5rem; overflow: hidden; height: 32vh; min-height: 13rem; }
+    canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+    .hidden { display: none; }
+    .chem-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.45rem; margin-top: 0.65rem; }
+    .chem-card { background: #0f172a; border: 0.0625rem solid #26324d; border-radius: 0.5rem; padding: 0.45rem 0.6rem; display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.8rem; }
+    .chem-card .lbl { color: var(--muted); font-size: 0.72rem; }
+    .badge-pill { display: inline-block; padding: 0.25rem 0.6rem; border-radius: 999rem; font-size: 0.78rem; font-weight: 700; background: #1e293b; border: 0.0625rem solid #334155; }
+    .badge-safe { border-color: var(--ok); } .badge-warning { border-color: var(--warn); background: rgba(245,158,11,0.12); } .badge-critical { border-color: var(--crit); background: rgba(239,68,68,0.16); }
+    .ai-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .ai-output { white-space: pre-wrap; max-height: 22vh; overflow-y: auto; background: #0b1120; border: 0.0625rem solid #243047; border-radius: 0.5rem; padding: 0.75rem; font-size: 0.85rem; line-height: 1.45; color: #e2e8f0; margin-top: 0.5rem; }
+    .metrics-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.82rem; margin-top: 0.4rem; }
+    .metrics-col { display: grid; grid-template-columns: 1fr; gap: 0.35rem; font-size: 0.82rem; margin-top: 0.4rem; }
+    .bench-item { padding: 0.55rem 0; border-bottom: 0.0625rem solid #243047; font-size: 0.82rem; }
+    .status { font-size: 0.8rem; color: var(--muted); margin-top: 0.4rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>NASA Microgravity Fire Risk — Dual 2D/3D WebGPU</h1>
+    <div class="row-inline">
+      <span id="gpuStatus" class="status">Worker Thread Standby — Press Run Simulation to spawn thread &amp; GPU compute</span>
+      <button id="syncBtn" class="secondary" type="button">Sincronizar SQLite &amp; Chroma</button>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="panel">
+      <h2>Parámetros de Combustión 0g</h2>
+      <form id="simForm">
+        <label for="matSelect">Material</label><select id="matSelect" required></select>
+        <div class="row-inline">
+          <div style="flex:1"><label for="o2Input">Oxígeno (%)</label><input id="o2Input" type="number" step="0.5" min="0" max="100" value="21.0" required /></div>
+          <div style="flex:1"><label for="psiInput">Presión (PSI)</label><input id="psiInput" type="number" step="0.5" min="1" max="50" value="14.7" required /></div>
+          <div style="flex:1"><label for="flowInput">Flujo (cm/s)</label><input id="flowInput" type="number" step="0.5" min="0" max="500" value="10.0" required /></div>
+        </div>
+        <label for="ignInput">Igniter Power (W)</label>
+        <div class="row-inline">
+          <input id="ignRange" type="range" min="0" max="500" step="5" value="120" />
+          <input id="ignInput" type="number" min="0" max="500" step="5" value="120" required />
+        </div>
+        <label for="llmSelect">LLM Model</label>
+        <div class="row-inline">
+          <select id="llmSelect"><option value="qwen3.5:9b">qwen3.5:9b (default)</option></select>
+          <button id="wakeupBtn" class="secondary" type="button">Wake Up Models</button>
+        </div>
+        <label for="ctxInput">Contexto de Consulta</label><input id="ctxInput" type="text" maxlength="500" placeholder="Ej. cabina presurizada" />
+        <div class="row-inline">
+          <button id="btn_simulate" type="submit">Run Simulation</button>
+          <button id="resetGasBtn" class="secondary" type="button">Reiniciar Cámara</button>
+          <button id="exportBtn" class="secondary" type="button" disabled>Exportar Reporte</button>
+        </div>
+      </form>
+      <div id="resultContainer" class="status">Esperando ejecución...</div>
+    </section>
+
+    <section class="panel">
+      <div class="view-bar">
+        <button id="btn3d" class="secondary active" type="button">3D WebGPU</button>
+        <button id="btn2d" class="secondary" type="button">2D Thermal/Gas</button>
+        <button id="btnDual" class="secondary" type="button">Dual</button>
+      </div>
+      <div id="viewportGrid" class="viewport-grid">
+        <div id="box3d" class="canvas-box"><canvas id="canvas3d"></canvas></div>
+        <div id="box2d" class="canvas-box hidden"><canvas id="canvas2d"></canvas></div>
+      </div>
+      <div id="chemTelemetry" class="status">Worker inactivo — telemetría química se activará al pulsar Run Simulation.</div>
+    </section>
+
+    <section id="ai_analysis_panel" class="panel">
+      <div id="ai_analysis_box">
+        <div class="ai-header">
+          <h2>AI / RAG Technical Analysis (Local &amp; API LLM)</h2>
+          <span id="llm_status_badge" class="badge-pill">Standby</span>
+        </div>
+        <div id="ai_conclusion_output" class="ai-output">Ejecuta una simulación con Run Simulation para recibir el análisis físico, deltas NASA y citas vectoriales desde el LLM local.</div>
+      </div>
+      <h2 style="margin-top:0.9rem;">Benchmarks NASA (SQL LIKE)</h2>
+      <label for="searchInput">Filtrar por material, código o resultado</label>
+      <input id="searchInput" type="search" placeholder="Buscar ej. pmma, saffire, sustained..." />
+      <div id="benchList" class="status">Cargando benchmarks...</div>
+    </section>
+  </main>
+
+  <script src="render_engines.js"></script>
+  <script src="core_abstracts.js"></script>
+  <script>
+    (() => {
+      const { NasaApiFetcher, OffscreenSimulationController, ChemicalTelemetryCard, SimulationResultCard, NasaReportExporter, escapeXSS } = window.NasaCore;
+      const api = new NasaApiFetcher(16);
+      const chemCard = new ChemicalTelemetryCard(document.getElementById("chemTelemetry"));
+      const simCard = new SimulationResultCard(document.getElementById("resultContainer"));
+      const exporter = new NasaReportExporter();
+      const matSel = document.getElementById("matSelect"), llmSel = document.getElementById("llmSelect");
+      const ignR = document.getElementById("ignRange"), ignIn = document.getElementById("ignInput");
+      let materialsMap = {};
+
+      const ctrl = new OffscreenSimulationController({
+        api, simCard, chemCard,
+        canvas3d: document.getElementById("canvas3d"), canvas2d: document.getElementById("canvas2d"),
+        box3d: document.getElementById("box3d"), box2d: document.getElementById("box2d"),
+        vpGrid: document.getElementById("viewportGrid"), gpuStatus: document.getElementById("gpuStatus"),
+        llmBadge: document.getElementById("llm_status_badge"), llmOutput: document.getElementById("ai_conclusion_output"),
+        exportBtn: document.getElementById("exportBtn"),
+      });
+
+      const readParams = () => {
+        const mat = materialsMap[Number(matSel.value)] || {};
+        return {
+          materialId: Number(matSel.value), materialName: mat.name || "Cotton Fabric", category: mat.category || "Solid",
+          oxygenPct: Number(document.getElementById("o2Input").value), pressurePsi: Number(document.getElementById("psiInput").value),
+          airflowCms: Number(document.getElementById("flowInput").value), igniterPowerW: Number(ignIn.value),
+          llmModel: llmSel.value || null, queryContext: document.getElementById("ctxInput").value,
+        };
+      };
+      async function loadMaterials() {
+        const items = await api.request("/materials");
+        materialsMap = Object.fromEntries(items.map((m) => [m.id, m]));
+        matSel.innerHTML = items.map((m) => `<option value="${m.id}">${escapeXSS(m.name)} (${escapeXSS(m.category)})</option>`).join("");
+      }
+      async function loadModels() {
+        try {
+          const data = await api.request("/llm-models");
+          const list = data.models && data.models.length ? data.models : [data.active_model || "qwen3.5:9b"];
+          llmSel.innerHTML = list.map((m) => `<option value="${escapeXSS(m)}">${escapeXSS(m)}</option>`).join("");
+        } catch (_e) {}
+      }
+      async function loadBenchmarks(q = "") {
+        const items = await api.request(`/benchmarks?q=${encodeURIComponent(q)}`);
+        document.getElementById("benchList").innerHTML = items.length ? items.map((b) => `<div class="bench-item"><strong>[${escapeXSS(b.psi_id)} - ${escapeXSS(b.code)}]</strong> ${escapeXSS(b.material_name)} | O2=${b.oxygen_pct}% | ${b.burn_rate_mms} mm/s | <em>${escapeXSS(b.outcome)}</em></div>`).join("") : "<p>Sin coincidencias.</p>";
+      }
+
+      ignR.addEventListener("input", () => { ignIn.value = ignR.value; ctrl.pushParamsIfActive(readParams()); });
+      ignIn.addEventListener("input", () => { ignR.value = ignIn.value; ctrl.pushParamsIfActive(readParams()); });
+      [matSel, document.getElementById("o2Input"), document.getElementById("psiInput"), document.getElementById("flowInput")].forEach((el) => el.addEventListener("change", () => ctrl.pushParamsIfActive(readParams())));
+      [["btn3d", "3d"], ["btn2d", "2d"], ["btnDual", "dual"]].forEach(([id, mode]) => document.getElementById(id).addEventListener("click", () => ctrl.setViewMode(mode, id)));
+      document.getElementById("resetGasBtn").addEventListener("click", () => ctrl.resetChamber());
+      document.getElementById("simForm").addEventListener("submit", (e) => { e.preventDefault(); ctrl.runSimulation(readParams()); });
+      document.getElementById("wakeupBtn").addEventListener("click", async () => {
+        const res = await api.request("/llm-models/wakeup", { method: "POST", body: "{}" });
+        if (res.models && res.models.length) llmSel.innerHTML = res.models.map((m) => `<option value="${escapeXSS(m)}">${escapeXSS(m)}</option>`).join("");
+      });
+      document.getElementById("searchInput").addEventListener("input", (e) => loadBenchmarks(e.target.value));
+      document.getElementById("syncBtn").addEventListener("click", async () => { await api.request("/sync-diff", { method: "POST" }); api.clearCache(); await Promise.all([loadMaterials(), loadBenchmarks(document.getElementById("searchInput").value)]); });
+      document.getElementById("exportBtn").addEventListener("click", () => ctrl.lastReport && exporter.saveDocument({ ...ctrl.lastReport, telemetry: ctrl.lastTelemetry }));
+      Promise.all([loadMaterials(), loadModels(), loadBenchmarks()]);
+    })();
+  </script>
+</body>
+</html>

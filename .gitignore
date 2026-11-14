@@ -1,0 +1,7 @@
+versiones_y_errores/
+.venv/
+venv/
+__pycache__/
+.env
+*.pyc
+.DS_Store
