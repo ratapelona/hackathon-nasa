@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NASA Microgravity Fire Risk — Simulador Dual WebGPU</title>
+  <title>NASA Microgravity Fire Risk — Simulador 3D Three.js &amp; WebGPU</title>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+  </script>
   <style>
     :root { --bg:#0b1020; --card:#141c33; --accent:#38bdf8; --text:#e2e8f0; --muted:#94a3b8; --ok:#22c55e; --warn:#f59e0b; --crit:#ef4444; }
     * { box-sizing: border-box; }
@@ -24,9 +27,9 @@
     .view-bar { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.65rem; align-items: center; }
     .viewport-grid { display: grid; gap: 0.65rem; grid-template-columns: 1fr; }
     .viewport-grid.dual { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
-    .canvas-box { background: #070b16; border: 0.0625rem solid #243047; border-radius: 0.5rem; overflow: hidden; height: 32vh; min-height: 13rem; }
+    .canvas-box { background: #070b16; border: 0.0625rem solid #243047; border-radius: 0.5rem; overflow: hidden; height: 32vh; min-height: 13rem; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.82rem; }
     canvas { width: 100%; height: 100%; display: block; touch-action: none; }
-    .hidden { display: none; }
+    .hidden { display: none !important; }
     .chem-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: 0.45rem; margin-top: 0.65rem; }
     .chem-card { background: #0f172a; border: 0.0625rem solid #26324d; border-radius: 0.5rem; padding: 0.45rem 0.6rem; display: flex; flex-direction: column; gap: 0.1rem; font-size: 0.8rem; }
     .chem-card .lbl { color: var(--muted); font-size: 0.72rem; }
@@ -42,9 +45,9 @@
 </head>
 <body>
   <header>
-    <h1>NASA Microgravity Fire Risk — Dual 2D/3D WebGPU</h1>
+    <h1>NASA Microgravity Fire Risk — Three.js 3D &amp; WebGPU</h1>
     <div class="row-inline">
-      <span id="gpuStatus" class="status">Worker Thread Standby — Press Run Simulation to spawn thread &amp; GPU compute</span>
+      <span id="gpuStatus" class="status">Worker Thread Standby — Press Run Simulation</span>
       <button id="syncBtn" class="secondary" type="button">Sincronizar SQLite &amp; Chroma</button>
     </div>
   </header>
@@ -81,13 +84,13 @@
 
     <section class="panel">
       <div class="view-bar">
-        <button id="btn3d" class="secondary active" type="button">3D WebGPU</button>
+        <button id="btn3d" class="secondary active" type="button">3D Three.js</button>
         <button id="btn2d" class="secondary" type="button">2D Thermal/Gas</button>
         <button id="btnDual" class="secondary" type="button">Dual</button>
       </div>
       <div id="viewportGrid" class="viewport-grid">
-        <div id="box3d" class="canvas-box"><canvas id="canvas3d"></canvas></div>
-        <div id="box2d" class="canvas-box hidden"><canvas id="canvas2d"></canvas></div>
+        <div id="viewport_3d" class="canvas-box">Worker Thread Standby — Press Run Simulation</div>
+        <div id="box2d" class="canvas-box hidden"><canvas id="canvas_2d"></canvas></div>
       </div>
       <div id="chemTelemetry" class="status">Worker inactivo — telemetría química se activará al pulsar Run Simulation.</div>
     </section>
@@ -122,9 +125,8 @@
 
       const ctrl = new OffscreenSimulationController({
         api, simCard, chemCard,
-        canvas3d: document.getElementById("canvas3d"), canvas2d: document.getElementById("canvas2d"),
-        box3d: document.getElementById("box3d"), box2d: document.getElementById("box2d"),
-        vpGrid: document.getElementById("viewportGrid"), gpuStatus: document.getElementById("gpuStatus"),
+        viewport3d: document.getElementById("viewport_3d"), canvas2d: document.getElementById("canvas_2d"),
+        box2d: document.getElementById("box2d"), vpGrid: document.getElementById("viewportGrid"), gpuStatus: document.getElementById("gpuStatus"),
         llmBadge: document.getElementById("llm_status_badge"), llmOutput: document.getElementById("ai_conclusion_output"),
         exportBtn: document.getElementById("exportBtn"),
       });

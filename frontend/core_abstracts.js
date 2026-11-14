@@ -90,55 +90,59 @@
   class OffscreenSimulationController {
     constructor(cfg) {
       Object.assign(this, cfg);
-      this.worker = null; this.transferred = false; this.viewMode = "3d";
-      this.lastReport = null; this.lastTelemetry = null; this.drag = false; this._bindDrag();
+      this.worker = null; this.r3d = null; this.transferred = false; this.viewMode = "3d";
+      this.lastReport = null; this.lastTelemetry = null;
     }
     _measureBox(box) {
-      const r = box.getBoundingClientRect();
+      const r = box ? box.getBoundingClientRect() : { width: 320, height: 240 };
       return { width: Math.max(120, r.width || 320), height: Math.max(120, r.height || 240), dpr: window.devicePixelRatio || 1 };
     }
-    _measureSizes() { return { s3d: this._measureBox(this.box3d), s2d: this._measureBox(this.box2d) }; }
-    _bindDrag() {
-      let lx = 0, ly = 0;
-      this.canvas3d.addEventListener("pointerdown", (e) => { this.drag = true; lx = e.clientX; ly = e.clientY; });
-      window.addEventListener("pointermove", (e) => {
-        if (!this.drag || !this.worker) return;
-        this.worker.postMessage({ type: "ORBIT_DELTA", dyaw: (e.clientX - lx) * 0.01, dpitch: (e.clientY - ly) * 0.01 });
-        lx = e.clientX; ly = e.clientY;
-      });
-      window.addEventListener("pointerup", () => { this.drag = false; });
-    }
     _watchResizes() {
-      const ro = new ResizeObserver(() => { if (this.worker) this.worker.postMessage({ type: "RESIZE_CANVAS", ...this._measureSizes() }); });
-      ro.observe(this.box3d); ro.observe(this.box2d);
+      if (typeof ResizeObserver !== "function" || !this.box2d) return;
+      new ResizeObserver(() => {
+        if (this.worker) this.worker.postMessage({ type: "RESIZE_CANVAS", s2d: this._measureBox(this.box2d) });
+      }).observe(this.box2d);
     }
     _onWorkerMsg(m) {
       if (!m) return;
-      if (m.type === "TELEMETRY_TICK" && m.metrics) { this.lastTelemetry = m.metrics; this.chemCard.update(m.metrics); }
-      if (m.type === "RENDER_MODE") this.gpuStatus.textContent = `${m.gpuComputeActive ? "GPU Compute (@workgroup_size(256))" : "Worker Sim"} | ${m.mode3d}`;
+      if (m.type === "TELEMETRY_TICK" && m.metrics) {
+        this.lastTelemetry = m.metrics; this.chemCard.update(m.metrics);
+        if (this.r3d) this.r3d.render(m.metrics, m.particles);
+      }
+      if (m.type === "RENDER_MODE") {
+        this.gpuStatus.textContent = `${m.gpuComputeActive ? "GPU Compute (@workgroup_size(256))" : "Worker CPU Fallback"} | ${this.r3d ? this.r3d.modeLabel : "3D Three.js"} | ${m.mode2d}`;
+      }
     }
     setViewMode(mode, activeId) {
       this.viewMode = mode; this.vpGrid.classList.toggle("dual", mode === "dual");
-      this.box3d.classList.toggle("hidden", mode === "2d"); this.box2d.classList.toggle("hidden", mode === "3d");
+      this.viewport3d.classList.toggle("hidden", mode === "2d"); this.box2d.classList.toggle("hidden", mode === "3d");
       ["btn3d", "btn2d", "btnDual"].forEach((id) => document.getElementById(id)?.classList.toggle("active", id === activeId));
       if (this.worker) {
         this.worker.postMessage({ type: "SET_VIEW_MODE", viewMode: mode });
-        requestAnimationFrame(() => this.worker.postMessage({ type: "RESIZE_CANVAS", ...this._measureSizes() }));
+        const sendSize = () => this.worker.postMessage({ type: "RESIZE_CANVAS", s2d: this._measureBox(this.box2d) });
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(sendSize); else sendSize();
       }
     }
     pushParamsIfActive(params) { if (this.worker) this.worker.postMessage({ type: "UPDATE_PARAMS", params }); }
-    resetChamber() { if (this.worker) this.worker.postMessage({ type: "RESET_CHAMBER" }); }
+    resetChamber() { if (this.worker) this.worker.postMessage({ type: "RESET_CHAMBER" }); if (this.r3d) this.r3d.resetCamera(); }
     async runSimulation(params) {
+      this.llmBadge.className = "badge-pill badge-warning"; this.llmBadge.textContent = "⏳ Running Model...";
       if (!this.worker) { this.worker = new Worker("physics_worker.js"); this.worker.onmessage = (e) => this._onWorkerMsg(e.data); }
+      const sizes = { s2d: this._measureBox(this.box2d) };
       if (!this.transferred) {
         this.transferred = true;
-        const off3d = this.canvas3d.transferControlToOffscreen(), off2d = this.canvas2d.transferControlToOffscreen();
-        this.worker.postMessage({ type: "INIT_CANVAS", off3d, off2d, viewMode: this.viewMode, sizes: this._measureSizes() }, [off3d, off2d]);
+        const off2d = this.canvas2d.transferControlToOffscreen();
+        this.worker.postMessage({ type: "START_SIMULATION", canvas2d: off2d, params, viewMode: this.viewMode, sizes }, [off2d]);
         this._watchResizes();
+      } else {
+        this.worker.postMessage({ type: "START_SIMULATION", params, viewMode: this.viewMode, sizes });
       }
-      this.worker.postMessage({ type: "START_SIMULATION", params, viewMode: this.viewMode, sizes: this._measureSizes() });
-      this.llmBadge.className = "badge-pill badge-warning";
-      this.llmBadge.textContent = `⏳ Generating with ${params.llmModel || "default"}...`;
+      if (!this.r3d && window.NasaRenderers?.ThreeJSFlameRenderer) {
+        this.r3d = new window.NasaRenderers.ThreeJSFlameRenderer();
+        await this.r3d.init(this.viewport3d);
+        if (this.lastTelemetry) this.r3d.render(this.lastTelemetry);
+        this.gpuStatus.textContent = `${this.r3d.modeLabel} | Worker & GPU Compute`;
+      }
       const t0 = performance.now();
       try {
         const data = await this.api.request("/simulate", {
@@ -147,7 +151,7 @@
         });
         const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
         this.lastReport = data; this.exportBtn.disabled = false;
-        this.llmBadge.className = "badge-pill badge-safe"; this.llmBadge.textContent = `✅ Response Ready (${elapsed}s)`;
+        this.llmBadge.className = "badge-pill badge-safe"; this.llmBadge.textContent = `✅ Ready (${elapsed}s)`;
         const refs = `Benchmarks SQLite: [${(data.sqlite_pointer_ids || []).join(", ")}] | Citations Chroma: [${(data.chroma_pointer_ids || []).join(", ")}]`;
         this.llmOutput.textContent = `${data.ai_conclusion_text}\n\n---\nMaterial: ${data.material_name} | Risk: ${data.calculated_risk_score}/100 | Vf: ${data.predicted_burn_rate_mms} mm/s (${data.outcome_prediction})\n${refs}`;
         this.simCard.update(data); this.worker.postMessage({ type: "SYNC_BACKEND_TRUTH", data });
