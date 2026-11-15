@@ -1,8 +1,8 @@
 from contextlib import closing
 import difflib
 import hashlib
-import html
 import json
+import re
 import sqlite3
 import sys
 from functools import lru_cache
@@ -141,12 +141,12 @@ def ingest_raw_files(conn: sqlite3.Connection) -> tuple[int, int]:
         extracted = ""
         if file_path.suffix.lower() == ".json":
             data = json.loads(file_path.read_text(encoding="utf-8", errors="ignore"))
-            extracted = f"{data.get('title', '')} | {data.get('abstract', data.get('summary', ''))}"[:3000]
+            extracted = f"{data.get('title', '')} | {data.get('abstract', data.get('summary', ''))}"[:12000]
         elif file_path.suffix.lower() == ".pdf":
             with pdfplumber.open(file_path) as pdf:
-                pages_text = [p.extract_text() or "" for p in pdf.pages[:5]]
-                extracted = "\n".join(pages_text)[:3000]
-        clean_extracted = html.escape(extracted.strip(), quote=True)
+                pages_text = [p.extract_text() or "" for p in pdf.pages[:25]]
+                extracted = "\n".join(pages_text)[:12000]
+        clean_extracted = re.sub(r"\s+", " ", extracted).strip()
         rel_path = OSPlatformFactory.get_handler().to_portable_relpath(file_path, PROJECT_ROOT)
         cur.execute(
             "INSERT INTO Sync_State (file_hash, file_path, extracted_text) VALUES (?, ?, ?)",

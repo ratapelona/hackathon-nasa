@@ -77,11 +77,12 @@ class RAGQualityController:
         scored: list[dict[str, Any]] = []
         for cand in candidates:
             sem = max(0.0, min(1.0, float(cand.get("semantic_score", 0.5))))
-            cand_o2 = float(cand.get("oxygen_pct", target_o2))
-            cand_psi = float(cand.get("pressure_psi", target_psi))
-            o2_prox = max(0.0, 1.0 - abs(cand_o2 - float(target_o2)) / 25.0)
-            psi_prox = max(0.0, 1.0 - abs(cand_psi - float(target_psi)) / 15.0)
-            phys = 0.5 * (o2_prox + psi_prox)
+            if "oxygen_pct" in cand and "pressure_psi" in cand:
+                o2_prox = max(0.0, 1.0 - abs(float(cand["oxygen_pct"]) - float(target_o2)) / 25.0)
+                psi_prox = max(0.0, 1.0 - abs(float(cand["pressure_psi"]) - float(target_psi)) / 15.0)
+                phys = 0.5 * (o2_prox + psi_prox)
+            else:
+                phys = 0.5
             combined = round(0.65 * sem + 0.35 * phys, 4)
             if combined >= float(min_threshold):
                 item = dict(cand)

@@ -112,7 +112,7 @@
       geo.setAttribute("position", new THREE.BufferAttribute(this.posArr, 3)); geo.setAttribute("color", new THREE.BufferAttribute(this.colArr, 3));
       this.gasPoints = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.24, map: this._tex(THREE, "smoke"), vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false })); this.gasPoints.renderOrder = 5;
       S.add(this.igniter, this.coreMesh, this.gasPoints);
-      if (globalThis.NasaEnvScenes) { this.envSys = globalThis.NasaEnvScenes.buildEnvScenes(THREE); if (this.pendingEnv) this.envSys.envId = this.pendingEnv; S.add(this.envSys.root); }
+      if (globalThis.NasaEnvScenes) { this.envSys = globalThis.NasaEnvScenes.buildEnvScenes(THREE); if (this.pendingEnv) globalThis.NasaEnvScenes.triggerEnvTransition(this.envSys, this.pendingEnv, false, this.camera, this.controls); S.add(this.envSys.root); }
     }
     async init(container) {
       this.container = container; if (container) container.innerHTML = "";
@@ -124,10 +124,11 @@
         ]);
         this.THREE = THREE; this.scene = new THREE.Scene();
         this.camera = new THREE.PerspectiveCamera(45, this.w / this.h, 0.1, 100); this.camera.position.set(0, 0.75, 5.4);
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); this.renderer.setClearColor(0x000000, 0); this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.0;
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); this.renderer.setClearColor(0x000000, 0); this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.0;
         Object.assign(this.renderer.domElement.style, { width: "100%", height: "100%", display: "block" }); container.appendChild(this.renderer.domElement);
         const pmrem = new THREE.PMREMGenerator(this.renderer); this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
-        this.controls = new OrbitControls(this.camera, this.renderer.domElement); this.controls.enableDamping = true; this._buildScene(THREE);
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement); this.controls.enableDamping = true; this.controls.dampingFactor = 0.06; this.controls.minDistance = 2.1; this.controls.maxDistance = 26;
+        this.controls.addEventListener("start", () => { if (this.envSys) this.envSys.flyActive = false; }); this._buildScene(THREE);
         this.composer = new EffectComposer(this.renderer); this.composer.addPass(new RenderPass(this.scene, this.camera));
         this.bloomPass = new UnrealBloomPass(new THREE.Vector2(this.w, this.h), 0.48, 0.35, 0.55); this.composer.addPass(this.bloomPass);
         this.bindResize(container); this.modeLabel = "3D PBR + Volumetric GLSL + Bloom";
@@ -135,7 +136,7 @@
         const tick = () => {
           const t = (performance.now() - this.t0) * 0.001, dt = Math.min(0.05, Math.max(0.001, t - prevT)); prevT = t; this.fireUniforms.uTime.value = t;
           if (this.envSys && globalThis.NasaEnvScenes) globalThis.NasaEnvScenes.updateEnvScenes(this.envSys, t, dt, this.camera, this.controls);
-          if (this.lastMetrics?.isIgnited) { this.flameLight.intensity = (2.2 + Math.min(3.5, (this.lastMetrics.radiationKwM2 || 0) / 300)) * (0.9 + 0.12 * Math.sin(t * 11.0)); this.flameLight.color.setHSL(0.07 + 0.015 * Math.sin(t * 7.3), 0.95, 0.55 + 0.05 * Math.sin(t * 13.1)); }
+          if (this.lastMetrics?.isIgnited) { this.flameLight.intensity = (2.0 + Math.min(4.2, (this.lastMetrics.radiationKwM2 || 0) / 220 + (this.lastMetrics.igniterPowerW || 0) / 180)) * (0.9 + 0.12 * Math.sin(t * 11.0)); }
           this.controls.update(); this.composer.render(); this.rafId = requestAnimationFrame(tick);
         };
         this.rafId = requestAnimationFrame(tick);
@@ -147,9 +148,9 @@
       return this.modeLabel;
     }
     resize(w, h, dpr = 1) { super.resize(w, h, dpr); if (this.renderer && this.camera) { this.camera.aspect = this.w / Math.max(1, this.h); this.camera.updateProjectionMatrix(); this.renderer.setPixelRatio(Math.min(this.dpr, 2)); this.renderer.setSize(this.w, this.h, false); this.composer?.setSize(this.w, this.h); this.bloomPass?.setSize(this.w, this.h); } if (this.fbCanvas) { this.fbCanvas.width = Math.max(1, Math.floor(this.w * this.dpr)); this.fbCanvas.height = Math.max(1, Math.floor(this.h * this.dpr)); } }
-    resetCamera() { if (this.camera && this.controls) { this.camera.position.set(0, 0.75, 5.4); this.controls.target.set(0, 0, 0); this.controls.update(); } }
-    setEnvironment(envId, zoom = false) { this.pendingEnv = envId; if (!this.envSys) return; this.envSys.envId = envId; if (zoom) { this.envSys.macroMode = false; this.envSys.zoomT = 0; this.envSys.zoomTarget = 1; } }
-    toggleMacroView() { if (!this.envSys) return false; this.envSys.macroMode = !this.envSys.macroMode; return this.envSys.macroMode; }
+    resetCamera() { if (this.envSys) this.envSys.flyActive = false; if (this.camera && this.controls) { this.camera.fov = 45; this.camera.updateProjectionMatrix(); this.camera.position.set(0, 0.75, 5.4); this.controls.target.set(0, 0, 0); this.controls.update(); } }
+    setEnvironment(envId, zoom = false) { this.pendingEnv = envId; if (this.envSys && globalThis.NasaEnvScenes) globalThis.NasaEnvScenes.triggerEnvTransition(this.envSys, envId, zoom, this.camera, this.controls); }
+    toggleMacroView() { if (!this.envSys || !globalThis.NasaEnvScenes) return false; this.envSys.macroMode = !this.envSys.macroMode; globalThis.NasaEnvScenes.triggerEnvTransition(this.envSys, this.envSys.envId, true, this.camera, this.controls); return this.envSys.macroMode; }
     updateState(s, particles) {
       if (s) this.lastMetrics = s; if (particles && particles.length >= 1024) this.lastParticles = particles;
       const m = this.lastMetrics; if (!m || this.fallback || !this.coreMesh) return;
@@ -159,11 +160,13 @@
       if (kind === "pmma") { const r = Math.max(0.2, fr); this.fuels.pmma.scale.set(r, 1, r); this.pmmaMat.roughness = 0.08 + 0.78 * charK; this.pmmaMat.bumpScale = 0.035 * charK; this.pmmaMat.transmission = 0.85 * Math.max(0.05, fr); this.pmmaMat.color.setRGB(0.91 - 0.78 * charK, 0.96 - 0.84 * charK, 0.99 - 0.88 * charK); edgeX = 0.22 * r; }
       else if (kind === "cotton") { this.charSheet.scale.y = Math.max(0.001, charK); this.charSheet.position.y = -0.45 + charK * 0.45; this.cottonMat.emissiveIntensity = m.isIgnited ? 0.65 : 0; edgeX = 0.25; edgeY = -0.45; }
       else if (kind === "droplet") { const d = Math.max(0.15, fr); this.dropMesh.scale.set(d, d, d); edgeX = 0.2 * d; }
-      this.igniter.position.set(-edgeX, edgeY, 0); this.ignMat.emissiveIntensity = Math.min(4.0, (m.igniterPowerW || 0) / 90);
-      const sc = Math.max(0.6, Math.min(1.6, Number(m.sphereRadiusScale) || 0.7)), lift = ((st - 1) * 0.28 + Math.min(0.25, (m.airflowCms || 0) * 0.004)) * sc;
-      this.coreMesh.visible = Boolean(m.isIgnited) && this.filter[0]; this.coreMesh.scale.set(sc, sc * st, sc); this.coreMesh.position.set(0, fy + lift, 0);
-      this.fireUniforms.uGLevel.value = m.gEff || 0; this.fireUniforms.uTemp.value = Math.max(0.5, Math.min(1.5, ((m.tempK || 300) - 295) / 1400));
-      this.fireUniforms.uBaseCol.value.set(m.flameColorHex || "#f59e0b"); this.flameLight.position.set(0, fy + lift, 0); if (!m.isIgnited) this.flameLight.intensity = 0;
+      this.igniter.position.set(-edgeX, edgeY, 0); this.ignMat.emissiveIntensity = Math.min(4.5, (m.igniterPowerW || 0) / 80);
+      const sc = Math.max(0.45, Math.min(2.15, Number(m.sphereRadiusScale) || 0.7)), lift = ((st - 1) * 0.28 + Math.min(0.28, (m.airflowCms || 0) * 0.0045)) * sc, lean = Math.min(0.18, (m.airflowCms || 0) * 0.0018);
+      this.coreMesh.visible = Boolean(m.isIgnited) && this.filter[0]; this.coreMesh.scale.set(sc, sc * st, sc); this.coreMesh.position.set(lean, fy + lift, 0); this.coreMesh.rotation.z = -Math.min(0.42, (m.airflowCms || 0) * 0.0045);
+      this.fireUniforms.uGLevel.value = (m.gEff || 0) + Math.min(0.8, (m.airflowCms || 0) * 0.008); this.fireUniforms.uTemp.value = Math.max(0.45, Math.min(1.65, ((m.tempK || 300) - 295) / 1300));
+      this.fireUniforms.uBaseCol.value.set(m.flameColorHex || "#f59e0b"); this.flameLight.color.set(m.flameColorHex || "#f59e0b"); this.flameLight.position.set(lean, fy + lift, 0);
+      if (this.bloomPass) this.bloomPass.strength = m.isIgnited ? Math.min(1.15, 0.36 + sc * 0.28 + (m.igniterPowerW || 0) / 1100) : 0.22;
+      if (!m.isIgnited) this.flameLight.intensity = 0;
       if (!this.lastParticles) return;
       for (let i = 0; i < 256; i++) {
         const [sp, inten] = decode(this.lastParticles[i * 4 + 3]), on = sp < 5 && this.filter[sp];

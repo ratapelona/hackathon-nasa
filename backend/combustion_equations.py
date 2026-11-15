@@ -14,6 +14,7 @@ class MicrogravityThermoConstants:
     std_pressure_psi: float = 14.7
     blowoff_airflow_cms: float = 18.0
     min_o2_pct: float = 12.0
+    da_extinction_crit: float = 0.05
 
 
 class AbstractCombustionEquations(ABC):
@@ -42,11 +43,12 @@ class AbstractCombustionEquations(ABC):
         self, base_flammability: float, oxygen_pct: float, pressure_psi: float, airflow_cms: float
     ) -> float:
         c = self._constants
-        flow_term = math.log1p(max(0.0, float(airflow_cms)))
+        flow = max(0.0, float(airflow_cms))
+        flow_term = math.log1p(flow)
         o2_ratio = max(0.0, (float(oxygen_pct) - c.min_o2_pct) / (c.std_o2_pct - c.min_o2_pct))
-        psi_ratio = max(0.1, float(pressure_psi) / c.std_pressure_psi)
-        convective_boost = 1.0 + 0.42 * flow_term
-        blowoff_penalty = 0.65 if airflow_cms >= c.blowoff_airflow_cms and oxygen_pct <= c.std_o2_pct else 1.0
+        psi_ratio = max(0.0, float(pressure_psi) / c.std_pressure_psi)
+        convective_boost = (1.0 + 0.42 * flow_term) / (1.0 + 0.008 * flow)
+        blowoff_penalty = 0.65 if flow >= c.blowoff_airflow_cms and oxygen_pct <= c.std_o2_pct else 1.0
         rate = (float(base_flammability) / 6.0) * o2_ratio * psi_ratio * convective_boost * blowoff_penalty
         return round(max(0.0, rate), 4)
 
@@ -55,9 +57,10 @@ class AbstractCombustionEquations(ABC):
         self, base_flammability: float, oxygen_pct: float, pressure_psi: float, airflow_cms: float
     ) -> float:
         c = self._constants
-        flow_term = math.log1p(max(0.0, float(airflow_cms)))
-        num = (float(base_flammability) / 10.0) * (float(oxygen_pct) / c.std_o2_pct) * (float(pressure_psi) / c.std_pressure_psi)
-        return round(max(0.0, num / (1.0 + 0.28 * flow_term)), 4)
+        flow = max(0.0, float(airflow_cms))
+        flow_term = math.log1p(flow)
+        num = (float(base_flammability) / 10.0) * (float(oxygen_pct) / c.std_o2_pct) * (max(0.0, float(pressure_psi)) / c.std_pressure_psi)
+        return round(max(0.0, num / (1.0 + 0.28 * flow_term + 0.035 * flow)), 4)
 
     @final
     def calc_radiative_heat_loss(self, oxygen_pct: float, airflow_cms: float) -> float:
@@ -72,27 +75,26 @@ class AbstractCombustionEquations(ABC):
         self, base_flammability: float, oxygen_pct: float,
         pressure_psi: float, airflow_cms: float, category: str = "Solid",
     ) -> dict[str, Any]:
+        c = self._constants
         diff_factor = float(self.get_material_diffusivity_factor(category))
-        base_rate = self.calc_spherical_diffusion_rate(base_flammability, oxygen_pct, pressure_psi, airflow_cms)
-        burn_rate = round(base_rate * diff_factor, 4)
         da_idx = self.calc_damkohler_ignition_index(base_flammability, oxygen_pct, pressure_psi, airflow_cms)
         rad_loss = self.calc_radiative_heat_loss(oxygen_pct, airflow_cms)
-        raw_score = (
+        base_rate = self.calc_spherical_diffusion_rate(base_flammability, oxygen_pct, pressure_psi, airflow_cms)
+        extinguished = float(oxygen_pct) < c.min_o2_pct or da_idx < c.da_extinction_crit or base_rate <= 0.0
+        da_eff = 0.0 if extinguished else (da_idx ** 2) / (da_idx ** 2 + c.da_extinction_crit ** 2)
+        burn_rate = 0.0 if extinguished else round(base_rate * diff_factor * da_eff, 4)
+        raw_score = 0.0 if extinguished else (
             float(base_flammability) * 4.8 + (float(oxygen_pct) - 14.0) * 1.35
             + burn_rate * 7.5 + da_idx * 14.0 - rad_loss * 18.0
         )
-        risk_score = max(0, min(100, int(round(raw_score))))
+        risk_score = 0 if extinguished else max(0, min(100, int(round(raw_score))))
         regime = "rapid_spread" if risk_score >= 75 else "sustained" if risk_score >= 45 else "cool_flame_or_extinction"
         flame_color_hex = "#ef4444" if risk_score >= 75 else "#f59e0b" if risk_score >= 45 else "#38bdf8"
-        sphere_radius_scale = round(min(3.0, max(0.35, 0.55 + burn_rate * 0.25 + da_idx * 0.3)), 3)
+        sphere_radius_scale = 0.35 if extinguished else round(min(3.0, max(0.35, 0.55 + burn_rate * 0.25 + da_idx * 0.3)), 3)
         return {
-            "burn_rate_mms": burn_rate,
-            "damkohler_index": da_idx,
-            "radiative_loss_fraction": rad_loss,
-            "risk_score": risk_score,
-            "regime_outcome": regime,
-            "flame_color_hex": flame_color_hex,
-            "sphere_radius_scale": sphere_radius_scale,
+            "burn_rate_mms": burn_rate, "damkohler_index": da_idx, "radiative_loss_fraction": rad_loss,
+            "risk_score": risk_score, "regime_outcome": regime,
+            "flame_color_hex": flame_color_hex, "sphere_radius_scale": sphere_radius_scale,
         }
 
 

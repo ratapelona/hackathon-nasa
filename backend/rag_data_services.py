@@ -4,6 +4,7 @@ from contextlib import closing
 from functools import lru_cache
 import hashlib
 from pathlib import Path
+import threading
 from typing import Any
 
 from backend.os_platform_handlers import OSPlatformFactory
@@ -44,7 +45,7 @@ def augment(
     delta_text = "; ".join(delta_items) if delta_items else "No matching NASA Experiment_Benchmarks."
     ctx_block = "\n".join(f"- {str(c).strip()}" for c in context_chunks if str(c).strip()) or "- Sin fragmentos PDF adicionales."
     prohibition = (
-        "PROHIBITED: risk_score >= 50. NEVER state low risk or slow spread (<1 cm/s)."
+        "PROHIBITED: risk_score >= 50. NEVER state low risk or slow spread (<1 mm/s)."
         if risk_score >= 50
         else "Report extinction/low-spread behavior consistently with risk_score < 50."
     )
@@ -63,42 +64,45 @@ def augment(
     )
 
 class RecentPointerCache(AbstractPointerCache):
-    """Caché LRU estricta de hasta 32 slots que almacena solo tuplas de punteros."""
+    """Caché LRU estricta de hasta 32 slots con candado de hilo que almacena solo tuplas de punteros."""
 
     def __init__(self, max_slots: int = 32) -> None:
         if max_slots < 1 or max_slots > 32:
             raise ValueError("max_slots debe estar entre 1 y 32.")
-        self._max_slots, self._store, self._hits, self._misses = max_slots, OrderedDict(), 0, 0
+        self._max_slots, self._store, self._hits, self._misses, self._lock = max_slots, OrderedDict(), 0, 0, threading.RLock()
 
     @staticmethod
-    def build_cache_key(req: SimulationRequestDTO) -> str:
-        raw = f"{req.material_id}|{req.custom_oxygen_pct:.2f}|{req.custom_pressure_psi:.2f}|{req.custom_airflow:.2f}|{req.query_context.lower()}"
+    def build_cache_key(req: SimulationRequestDTO, index_tag: str = "v1") -> str:
+        raw = f"{index_tag}|{req.material_id}|{req.custom_oxygen_pct:.2f}|{req.custom_pressure_psi:.2f}|{req.custom_airflow:.2f}|{req.query_context.lower()}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
     def get_pointer(self, key: str) -> PointerTuple | None:
-        if key not in self._store:
-            self._misses += 1
-            return None
-        self._store.move_to_end(key)
-        self._hits += 1
-        return self._store[key]
+        with self._lock:
+            if key not in self._store:
+                self._misses += 1
+                return None
+            self._store.move_to_end(key)
+            self._hits += 1
+            return self._store[key]
 
     def put_pointer(self, key: str, sqlite_ids: Sequence[int], chroma_ids: Sequence[str]) -> PointerTuple:
-        sqlite_tuple = tuple(int(i) for i in sqlite_ids)
-        chroma_tuple = tuple(str(c) for c in chroma_ids)
+        sqlite_tuple, chroma_tuple = tuple(int(i) for i in sqlite_ids), tuple(str(c) for c in chroma_ids)
         pointer: PointerTuple = (sqlite_tuple, chroma_tuple, hex(id(sqlite_tuple)))
-        self._store[key] = pointer
-        self._store.move_to_end(key)
-        if len(self._store) > self._max_slots:
-            self._store.popitem(last=False)
-        return pointer
+        with self._lock:
+            self._store[key] = pointer
+            self._store.move_to_end(key)
+            if len(self._store) > self._max_slots:
+                self._store.popitem(last=False)
+            return pointer
 
     def clear(self) -> None:
-        self._store.clear()
-        self._hits, self._misses = 0, 0
+        with self._lock:
+            self._store.clear()
+            self._hits, self._misses = 0, 0
 
     def stats(self) -> dict[str, int]:
-        return {"size": len(self._store), "max_slots": self._max_slots, "hits": self._hits, "misses": self._misses}
+        with self._lock:
+            return {"size": len(self._store), "max_slots": self._max_slots, "hits": self._hits, "misses": self._misses}
 
 class NasaFireRepository(AbstractDatabaseRepository):
     """Repositorio SQLite multihilo con consultas 100% parametrizadas (cero f-strings)."""
@@ -152,19 +156,15 @@ class NasaFireRepository(AbstractDatabaseRepository):
         clean_ids = [int(bid) for bid in benchmark_ids]
         if not clean_ids:
             return []
+        placeholders = ",".join("?" for _ in clean_ids)
         query = (
             "SELECT b.id, b.material_id, b.investigation_id, b.oxygen_pct, b.pressure_psi, "
             "b.airflow_cms, b.burn_rate_mms, b.outcome, m.name AS material_name, i.psi_id, i.code, i.hardware_used "
             "FROM Experiment_Benchmarks b JOIN Materials m ON b.material_id = m.id "
-            "JOIN Nasa_Investigations i ON b.investigation_id = i.id WHERE b.id = ?"
+            "JOIN Nasa_Investigations i ON b.investigation_id = i.id WHERE b.id IN (" + placeholders + ") ORDER BY b.id"
         )
-        results: list[dict[str, Any]] = []
         with self._open_conn() as conn:
-            for bid in clean_ids:
-                row = conn.execute(query, (bid,)).fetchone()
-                if row:
-                    results.append(dict(row))
-        return sorted(results, key=lambda item: int(item["id"]))
+            return [dict(r) for r in conn.execute(query, tuple(clean_ids)).fetchall()]
 
     def find_matching_benchmark_ids(self, material_id: int, oxygen_pct: float, pressure_psi: float) -> list[int]:
         query = "SELECT id FROM Experiment_Benchmarks WHERE material_id = ? ORDER BY ABS(oxygen_pct - ?) + ABS(pressure_psi - ?) ASC, id ASC LIMIT 5"

@@ -134,8 +134,8 @@ class OSPlatformFactory:
                         "SELECT material_id, custom_oxygen_pct, custom_pressure_psi, custom_airflow, calculated_risk_score, ai_conclusion_text FROM Simulation_Reports"
                     ).fetchall():
                         exists = canonical_conn.execute(
-                            "SELECT 1 FROM Simulation_Reports WHERE material_id=? AND custom_oxygen_pct=? AND custom_pressure_psi=? AND ai_conclusion_text=?",
-                            (row[0], row[1], row[2], row[5]),
+                            "SELECT 1 FROM Simulation_Reports WHERE material_id=? AND custom_oxygen_pct=? AND custom_pressure_psi=? AND custom_airflow=? AND ai_conclusion_text=?",
+                            (row[0], row[1], row[2], row[3], row[5]),
                         ).fetchone()
                         if not exists:
                             canonical_conn.execute(

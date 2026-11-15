@@ -104,30 +104,24 @@
   class OffscreenSimulationController {
     constructor(cfg) {
       Object.assign(this, cfg);
-      this.worker = null; this.r3d = null; this.transferred = false; this.viewMode = "3d";
-      this.lastReport = null; this.lastTelemetry = null; this.filter = [true, true, true, true, true];
+      this.worker = null; this.r3d = null; this.r3dReady = null; this.transferred = false; this.viewMode = "3d";
+      this.lastReport = null; this.lastTelemetry = null; this.lastEnvPreset = null; this.filter = [true, true, true, true, true];
     }
-    _measureBox(box) {
-      const r = box ? box.getBoundingClientRect() : { width: 320, height: 240 };
-      return { width: Math.max(120, r.width || 320), height: Math.max(120, r.height || 240), dpr: window.devicePixelRatio || 1 };
-    }
-    _watchResizes() {
-      if (typeof ResizeObserver !== "function" || !this.box2d) return;
-      new ResizeObserver(() => { if (this.worker) this.worker.postMessage({ type: "RESIZE_CANVAS", s2d: this._measureBox(this.box2d) }); }).observe(this.box2d);
-    }
+    _measureBox(box) { const r = box ? box.getBoundingClientRect() : { width: 320, height: 240 }; return { width: Math.max(120, r.width || 320), height: Math.max(120, r.height || 240), dpr: window.devicePixelRatio || 1 }; }
+    _watchResizes() { if (typeof ResizeObserver === "function" && this.box2d) new ResizeObserver(() => { if (this.worker) this.worker.postMessage({ type: "RESIZE_CANVAS", s2d: this._measureBox(this.box2d) }); }).observe(this.box2d); }
     _onWorkerMsg(m) {
       if (!m) return;
-      if (m.type === "TELEMETRY_TICK" && m.metrics) { this.lastTelemetry = m.metrics; this.chemCard.update(m.metrics); if (this.r3d) this.r3d.render(m.metrics, m.particles); }
+      if (m.type === "TELEMETRY_TICK" && m.metrics) {
+        const s = m.metrics; this.lastTelemetry = s; this.chemCard.update(s); if (this.r3d) this.r3d.render(s, m.particles);
+        const risk = s.isIgnited ? Math.min(100, Math.round(25 + s.propagationSpeedMms * 9 + Math.max(0, s.oxygenPct - 21) * 0.7 + s.igniterPowerW * 0.04)) : 0;
+        const reg = !s.isIgnited ? (s.igniterPowerW > 0 ? "PREHEATING" : "EXTINGUISHED") : s.oxygenPct >= 50 || s.propagationSpeedMms >= 6 ? "ACCELERATED_PLASMA" : "STEADY_PROPAGATION";
+        this.simCard.update({ material_name: s.materialName, calculated_risk_score: risk, predicted_burn_rate_mms: s.propagationSpeedMms, outcome_prediction: reg, flame_color_hex: s.flameColorHex, sphere_radius_scale: s.sphereRadiusScale, cache_hit: Boolean(this.lastReport?.cache_hit) });
+      }
       if (m.type === "RENDER_MODE") this.gpuStatus.textContent = `${m.gpuComputeActive ? "GPU Compute (@workgroup_size(256))" : "Worker CPU Fallback"} | ${this.r3d ? this.r3d.modeLabel : "3D Three.js"} | ${m.mode2d}`;
     }
     toggleSpecies(sp) {
-      if (sp === "all") { const allOn = !this.filter.every(Boolean); this.filter = [allOn, allOn, allOn, allOn, allOn]; }
-      else { const idx = Number(sp); if (idx >= 0 && idx < 5) this.filter[idx] = !this.filter[idx]; }
-      if (typeof document.querySelectorAll === "function") {
-        document.querySelectorAll("#speciesFilterBar [data-sp]").forEach((el) => {
-          const s = el.dataset.sp; el.classList.toggle("active", s === "all" ? this.filter.every(Boolean) : Boolean(this.filter[Number(s)]));
-        });
-      }
+      if (sp === "all") { const allOn = !this.filter.every(Boolean); this.filter = [allOn, allOn, allOn, allOn, allOn]; } else { const idx = Number(sp); if (idx >= 0 && idx < 5) this.filter[idx] = !this.filter[idx]; }
+      if (typeof document.querySelectorAll === "function") document.querySelectorAll("#speciesFilterBar [data-sp]").forEach((el) => { const s = el.dataset.sp; el.classList.toggle("active", s === "all" ? this.filter.every(Boolean) : Boolean(this.filter[Number(s)])); });
       if (this.r3d) { this.r3d.setFilter(this.filter); if (this.lastTelemetry) this.r3d.render(this.lastTelemetry); }
       if (this.worker) this.worker.postMessage({ type: "SET_SPECIES_FILTER", filter: this.filter });
     }
@@ -141,47 +135,49 @@
         if (typeof requestAnimationFrame === "function") requestAnimationFrame(sendSize); else sendSize();
       }
     }
-    pushParamsIfActive(params) { if (this.r3d && params.envPreset) this.r3d.setEnvironment(params.envPreset, false); if (this.worker) this.worker.postMessage({ type: "UPDATE_PARAMS", params }); }
+    async ensure3D(envPreset, zoom = false) {
+      if (!this.r3d && window.NasaRenderers?.ThreeJSFlameRenderer) {
+        if (!this.r3dReady) { const r = new window.NasaRenderers.ThreeJSFlameRenderer(); r.setFilter(this.filter); if (envPreset) r.setEnvironment(envPreset, false); this.r3dReady = r.init(this.viewport3d).then(() => { this.r3d = r; if (this.lastTelemetry) r.render(this.lastTelemetry); this.gpuStatus.textContent = `${r.modeLabel} | Standby`; return r; }); }
+        await this.r3dReady;
+      }
+      if (this.r3d && envPreset) { const chg = envPreset !== this.lastEnvPreset; this.lastEnvPreset = envPreset; this.r3d.setEnvironment(envPreset, zoom || chg); }
+      return this.r3d;
+    }
+    pushParamsIfActive(params) {
+      if (params.envPreset) this.ensure3D(params.envPreset, Boolean(params.envChanged));
+      if (this.worker) this.worker.postMessage({ type: "UPDATE_PARAMS", params, live: true }); else if (params.liveFire) this.runSimulation({ ...params, useLlm: false });
+    }
     toggleMacroView() { return this.r3d ? this.r3d.toggleMacroView() : false; }
     resetChamber() { if (this.worker) this.worker.postMessage({ type: "RESET_CHAMBER" }); if (this.r3d) this.r3d.resetCamera(); }
-    async runSimulation(params) {
-      this.llmBadge.className = "badge-pill badge-warning"; this.llmBadge.textContent = "⏳ Running Model...";
-      if (!this.worker) { this.worker = new Worker("physics_worker.js"); this.worker.onmessage = (e) => this._onWorkerMsg(e.data); }
-      const sizes = { s2d: this._measureBox(this.box2d) }, msg = { type: "START_SIMULATION", params, viewMode: this.viewMode, filter: this.filter, sizes };
-      if (!this.transferred) { this.transferred = true; const off2d = this.canvas2d.transferControlToOffscreen(); this.worker.postMessage({ ...msg, canvas2d: off2d }, [off2d]); this._watchResizes(); }
-      else { this.worker.postMessage(msg); }
-      if (!this.r3d && window.NasaRenderers?.ThreeJSFlameRenderer) {
-        this.r3d = new window.NasaRenderers.ThreeJSFlameRenderer(); this.r3d.setFilter(this.filter); await this.r3d.init(this.viewport3d);
-        if (this.lastTelemetry) this.r3d.render(this.lastTelemetry); this.gpuStatus.textContent = `${this.r3d.modeLabel} | Worker & GPU Compute`;
-      }
-      if (this.r3d && params.envPreset) this.r3d.setEnvironment(params.envPreset, true);
-      const t0 = performance.now();
+    setModelSleepState(armed = false) {
+      this.llmBadge.className = "badge-pill"; this.llmBadge.textContent = armed ? "Standby" : "💤 zzz";
+      if (!armed) this.llmOutput.textContent = "Modelo LLM en reposo (zzz). La simulación física 3D/2D corre localmente sin enviar datos al modelo.";
+    }
+    async sendSimulationToModel(params) {
+      this.llmBadge.className = "badge-pill badge-warning"; this.llmBadge.textContent = "⏳ Running Model..."; const t0 = performance.now();
       try {
         const data = await this.api.request("/simulate", { method: "POST", body: JSON.stringify({ material_id: params.materialId, custom_oxygen_pct: params.oxygenPct, custom_pressure_psi: params.pressurePsi, custom_airflow: params.airflowCms, query_context: params.queryContext || "", llm_model: params.llmModel || null }) });
-        const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
-        this.lastReport = data; this.exportBtn.disabled = false;
-        this.llmBadge.className = "badge-pill badge-safe"; this.llmBadge.textContent = `✅ Ready (${elapsed}s)`;
-        const refs = `Benchmarks SQLite: [${(data.sqlite_pointer_ids || []).join(", ")}] | Citations Chroma: [${(data.chroma_pointer_ids || []).join(", ")}]`;
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2), refs = `Benchmarks SQLite: [${(data.sqlite_pointer_ids || []).join(", ")}] | Citations Chroma: [${(data.chroma_pointer_ids || []).join(", ")}]`;
+        this.lastReport = data; this.exportBtn.disabled = false; this.llmBadge.className = "badge-pill badge-safe"; this.llmBadge.textContent = `✅ Ready (${elapsed}s)`;
         this.llmOutput.textContent = `${data.ai_conclusion_text}\n\n---\nMaterial: ${data.material_name} | Risk: ${data.calculated_risk_score}/100 | Vf: ${data.predicted_burn_rate_mms} mm/s (${data.outcome_prediction})\n${refs}`;
-        this.simCard.update(data); this.worker.postMessage({ type: "SYNC_BACKEND_TRUTH", data });
+        this.simCard.update(data); if (this.worker) this.worker.postMessage({ type: "SYNC_BACKEND_TRUTH", data });
       } catch (err) {
         this.llmBadge.className = "badge-pill badge-critical"; this.llmBadge.textContent = "⚠️ Deterministic Fallback";
         this.llmOutput.textContent = `Error conectando con /api/simulate (${err.message}). El Web Worker continúa la simulación 0g determinista.`;
       }
     }
+    async runSimulation(params) {
+      if (!this.worker) { this.worker = new Worker("physics_worker.js"); this.worker.onmessage = (e) => this._onWorkerMsg(e.data); }
+      const sizes = { s2d: this._measureBox(this.box2d) }, msg = { type: "START_SIMULATION", params, viewMode: this.viewMode, filter: this.filter, sizes };
+      if (!this.transferred) { this.transferred = true; const off2d = this.canvas2d.transferControlToOffscreen(); this.worker.postMessage({ ...msg, canvas2d: off2d }, [off2d]); this._watchResizes(); } else { this.worker.postMessage(msg); }
+      await this.ensure3D(params.envPreset, true); if (this.r3d) this.gpuStatus.textContent = `${this.r3d.modeLabel} | Worker & GPU Compute`;
+      if (params.useLlm === false) { this.setModelSleepState(false); return; } else { await this.sendSimulationToModel(params); }
+    }
   }
-
   class NasaReportExporter extends AbstractPDFExporter {
     formatReportContent(r) {
       const t = r.telemetry || {};
-      return [
-        "NASA MICROGRAVITY FIRE RISK & GAS TELEMETRY REPORT",
-        `Report ID: ${r.report_id ?? "N/A"} | Material: ${r.material_name} | Risk: ${r.calculated_risk_score}/100 | Vf: ${r.predicted_burn_rate_mms} mm/s (${r.outcome_prediction})`,
-        `Igniter: ${t.igniterPowerW ?? "N/A"} W | Tf: ${t.tempK ?? "N/A"} K | Radiation: ${t.radiationKwM2 ?? "N/A"} kW/m2`,
-        `Gases (ppm) [${t.overallGasStatus ?? "N/A"}]: CO2=${t.co2_ppm ?? 0}, HCN=${t.hcn_ppm ?? 0}, HCl=${t.hcl_ppm ?? 0}, NOx=${t.nox_ppm ?? 0}, SO2=${t.so2_ppm ?? 0}, HF=${t.hf_ppm ?? 0}`,
-        `SQLite Pointers: ${(r.sqlite_pointer_ids || []).join(", ")} | Chroma Pointers: ${(r.chroma_pointer_ids || []).join(", ")}`,
-        `Conclusion: ${r.ai_conclusion_text}`,
-      ].join("\n");
+      return ["NASA MICROGRAVITY FIRE RISK & GAS TELEMETRY REPORT", `Report ID: ${r.report_id ?? "N/A"} | Material: ${r.material_name} | Risk: ${r.calculated_risk_score}/100 | Vf: ${r.predicted_burn_rate_mms} mm/s (${r.outcome_prediction})`, `Igniter: ${t.igniterPowerW ?? "N/A"} W | Tf: ${t.tempK ?? "N/A"} K | Radiation: ${t.radiationKwM2 ?? "N/A"} kW/m2`, `Gases (ppm) [${t.overallGasStatus ?? "N/A"}]: CO2=${t.co2_ppm ?? 0}, HCN=${t.hcn_ppm ?? 0}, HCl=${t.hcl_ppm ?? 0}, NOx=${t.nox_ppm ?? 0}, SO2=${t.so2_ppm ?? 0}, HF=${t.hf_ppm ?? 0}`, `SQLite Pointers: ${(r.sqlite_pointer_ids || []).join(", ")} | Chroma Pointers: ${(r.chroma_pointer_ids || []).join(", ")}`, `Conclusion: ${r.ai_conclusion_text}`].join("\n");
     }
   }
 

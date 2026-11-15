@@ -62,13 +62,18 @@ def fetch_raw_docs_from_sqlite(conn: sqlite3.Connection) -> tuple[list[str], lis
         if len(clean_text) < 25:
             continue
         file_name = Path(row["file_path"]).name
-        docs.append(f"[NASA Document: {file_name}] {clean_text}")
-        metas.append({
-            "source": "raw_data_file",
-            "file_name": file_name,
-            "file_path": str(row["file_path"]),
-        })
-        ids.append(f"doc_{row['file_hash'][:16]}")
+        for c_idx, start in enumerate(range(0, len(clean_text), 850)):
+            chunk = clean_text[start:start + 1000].strip()
+            if len(chunk) < 25:
+                continue
+            docs.append(f"[NASA Document: {file_name}] {chunk}")
+            metas.append({
+                "source": "raw_data_file",
+                "file_name": file_name,
+                "file_path": str(row["file_path"]),
+                "chunk_index": c_idx,
+            })
+            ids.append(f"doc_{row['file_hash'][:16]}_c{c_idx}")
     return docs, metas, ids
 
 
