@@ -57,27 +57,28 @@
       <h2>Parámetros de Combustión 0g</h2>
       <form id="simForm">
         <label for="matSelect">Material</label><select id="matSelect" required></select>
+        <label for="env_preset">Entorno / Régimen Atmosférico &amp; Gravedad</label>
+        <select id="env_preset">
+          <option value="iss_0g">ISS / Laboratorio Orbital (0g | 14.7 PSI | 21% O2 | 10 cm/s)</option>
+          <option value="saffire_exploration">Cápsula Espacial Saffire (0g | 8.2 PSI | 34% O2 | 15 cm/s)</option>
+          <option value="drop_tower">Torre de Caída Libre (10⁻⁵g | 14.7 PSI | 21% O2 | 5 cm/s)</option>
+          <option value="parabolic_flight">Vuelo Parabólico Zero-G (0.01g con g-jitter | 14.7 PSI | 21% O2 | 10 cm/s)</option>
+          <option value="troposphere">Troposfera — Nivel del Mar (1.0g | 14.7 PSI | 21% O2 | 25 cm/s)</option>
+          <option value="stratosphere">Estratosfera — ~20 km (0.99g | 0.8 PSI | 21% O2 | 15 cm/s)</option>
+          <option value="mesosphere">Mesosfera — ~60 km (0.97g | 0.1 PSI | 21% O2 | 5 cm/s)</option>
+          <option value="thermosphere">Termosfera / Vacío Orbital (0g | 0.1 PSI | 0% O2 | 0 cm/s)</option>
+        </select>
         <div class="row-inline">
-          <div style="flex:1"><label for="o2Input">Oxígeno (%)</label><input id="o2Input" type="number" step="0.5" min="0" max="100" value="21.0" required /></div>
-          <div style="flex:1"><label for="psiInput">Presión (PSI)</label><input id="psiInput" type="number" step="0.5" min="1" max="50" value="14.7" required /></div>
-          <div style="flex:1"><label for="flowInput">Flujo (cm/s)</label><input id="flowInput" type="number" step="0.5" min="0" max="500" value="10.0" required /></div>
+          <div style="flex:1"><label for="o2Input">Oxígeno (%)</label><input id="o2Input" type="number" step="any" min="0" max="100" value="21.0" required /></div>
+          <div style="flex:1"><label for="psiInput">Presión (PSI)</label><input id="psiInput" type="number" step="any" min="0.1" max="50" value="14.7" required /></div>
+          <div style="flex:1"><label for="flowInput">Flujo (cm/s)</label><input id="flowInput" type="number" step="any" min="0" max="500" value="10.0" required /></div>
         </div>
         <label for="ignInput">Igniter Power (W)</label>
-        <div class="row-inline">
-          <input id="ignRange" type="range" min="0" max="500" step="5" value="120" />
-          <input id="ignInput" type="number" min="0" max="500" step="5" value="120" required />
-        </div>
+        <div class="row-inline"><input id="ignRange" type="range" min="0" max="500" step="5" value="120" /><input id="ignInput" type="number" min="0" max="500" step="5" value="120" required /></div>
         <label for="llmSelect">LLM Model</label>
-        <div class="row-inline">
-          <select id="llmSelect"><option value="qwen3.5:9b">qwen3.5:9b (default)</option></select>
-          <button id="wakeupBtn" class="secondary" type="button">Wake Up Models</button>
-        </div>
+        <div class="row-inline"><select id="llmSelect"><option value="qwen3.5:9b">qwen3.5:9b (default)</option></select><button id="wakeupBtn" class="secondary" type="button">Wake Up Models</button></div>
         <label for="ctxInput">Contexto de Consulta</label><input id="ctxInput" type="text" maxlength="500" placeholder="Ej. cabina presurizada" />
-        <div class="row-inline">
-          <button id="btn_simulate" type="submit">Run Simulation</button>
-          <button id="resetGasBtn" class="secondary" type="button">Reiniciar Cámara</button>
-          <button id="exportBtn" class="secondary" type="button" disabled>Exportar Reporte</button>
-        </div>
+        <div class="row-inline"><button id="btn_simulate" type="submit">Run Simulation</button><button id="resetGasBtn" class="secondary" type="button">Reiniciar Cámara</button><button id="exportBtn" class="secondary" type="button" disabled>Exportar Reporte</button></div>
       </form>
       <div id="resultContainer" class="status">Esperando ejecución...</div>
     </section>
@@ -87,6 +88,9 @@
         <button id="btn3d" class="secondary active" type="button">3D Three.js</button>
         <button id="btn2d" class="secondary" type="button">2D Thermal/Gas</button>
         <button id="btnDual" class="secondary" type="button">Dual</button>
+      </div>
+      <div id="speciesFilterBar" class="view-bar">
+        <button class="secondary active" type="button" data-sp="all">Todas</button><button class="secondary active" type="button" data-sp="0">Llama</button><button class="secondary active" type="button" data-sp="1">CO2</button><button class="secondary active" type="button" data-sp="2">NOx</button><button class="secondary active" type="button" data-sp="3">Tóxicos HCN/HCl/HF</button><button class="secondary active" type="button" data-sp="4">Flujo O2</button>
       </div>
       <div id="viewportGrid" class="viewport-grid">
         <div id="viewport_3d" class="canvas-box">Worker Thread Standby — Press Run Simulation</div>
@@ -114,30 +118,23 @@
   <script src="core_abstracts.js"></script>
   <script>
     (() => {
-      const { NasaApiFetcher, OffscreenSimulationController, ChemicalTelemetryCard, SimulationResultCard, NasaReportExporter, escapeXSS } = window.NasaCore;
-      const api = new NasaApiFetcher(16);
-      const chemCard = new ChemicalTelemetryCard(document.getElementById("chemTelemetry"));
-      const simCard = new SimulationResultCard(document.getElementById("resultContainer"));
-      const exporter = new NasaReportExporter();
-      const matSel = document.getElementById("matSelect"), llmSel = document.getElementById("llmSelect");
+      const { NasaApiFetcher, OffscreenSimulationController, ChemicalTelemetryCard, SimulationResultCard, NasaReportExporter, ENV_PRESETS, escapeXSS } = window.NasaCore;
+      const api = new NasaApiFetcher(16), chemCard = new ChemicalTelemetryCard(document.getElementById("chemTelemetry")), simCard = new SimulationResultCard(document.getElementById("resultContainer")), exporter = new NasaReportExporter();
+      const matSel = document.getElementById("matSelect"), envSel = document.getElementById("env_preset"), llmSel = document.getElementById("llmSelect");
       const ignR = document.getElementById("ignRange"), ignIn = document.getElementById("ignInput");
       let materialsMap = {};
-
       const ctrl = new OffscreenSimulationController({
-        api, simCard, chemCard,
-        viewport3d: document.getElementById("viewport_3d"), canvas2d: document.getElementById("canvas_2d"),
+        api, simCard, chemCard, viewport3d: document.getElementById("viewport_3d"), canvas2d: document.getElementById("canvas_2d"),
         box2d: document.getElementById("box2d"), vpGrid: document.getElementById("viewportGrid"), gpuStatus: document.getElementById("gpuStatus"),
-        llmBadge: document.getElementById("llm_status_badge"), llmOutput: document.getElementById("ai_conclusion_output"),
-        exportBtn: document.getElementById("exportBtn"),
+        llmBadge: document.getElementById("llm_status_badge"), llmOutput: document.getElementById("ai_conclusion_output"), exportBtn: document.getElementById("exportBtn"),
       });
-
       const readParams = () => {
-        const mat = materialsMap[Number(matSel.value)] || {};
+        const mat = materialsMap[Number(matSel.value)] || {}, env = ENV_PRESETS[envSel.value] || ENV_PRESETS.iss_0g;
         return {
           materialId: Number(matSel.value), materialName: mat.name || "Cotton Fabric", category: mat.category || "Solid",
           oxygenPct: Number(document.getElementById("o2Input").value), pressurePsi: Number(document.getElementById("psiInput").value),
           airflowCms: Number(document.getElementById("flowInput").value), igniterPowerW: Number(ignIn.value),
-          llmModel: llmSel.value || null, queryContext: document.getElementById("ctxInput").value,
+          gLevel: env.gLevel, gJitter: env.gJitter, llmModel: llmSel.value || null, queryContext: document.getElementById("ctxInput").value,
         };
       };
       async function loadMaterials() {
@@ -157,6 +154,12 @@
         document.getElementById("benchList").innerHTML = items.length ? items.map((b) => `<div class="bench-item"><strong>[${escapeXSS(b.psi_id)} - ${escapeXSS(b.code)}]</strong> ${escapeXSS(b.material_name)} | O2=${b.oxygen_pct}% | ${b.burn_rate_mms} mm/s | <em>${escapeXSS(b.outcome)}</em></div>`).join("") : "<p>Sin coincidencias.</p>";
       }
 
+      envSel.addEventListener("change", () => {
+        const env = ENV_PRESETS[envSel.value] || ENV_PRESETS.iss_0g;
+        document.getElementById("o2Input").value = env.o2; document.getElementById("psiInput").value = env.psi; document.getElementById("flowInput").value = env.flow;
+        ctrl.pushParamsIfActive(readParams());
+      });
+      document.getElementById("speciesFilterBar").addEventListener("click", (e) => { if (e.target.dataset.sp !== undefined) ctrl.toggleSpecies(e.target.dataset.sp); });
       ignR.addEventListener("input", () => { ignIn.value = ignR.value; ctrl.pushParamsIfActive(readParams()); });
       ignIn.addEventListener("input", () => { ignR.value = ignIn.value; ctrl.pushParamsIfActive(readParams()); });
       [matSel, document.getElementById("o2Input"), document.getElementById("psiInput"), document.getElementById("flowInput")].forEach((el) => el.addEventListener("change", () => ctrl.pushParamsIfActive(readParams())));

@@ -1,6 +1,6 @@
 "use strict";
-
-const DT = 0.05, SIGMA_SB = 5.670374419e-8, T_AMB = 295.0, EMISSIVITY = 0.82;
+if (typeof importScripts === "function") { try { importScripts("render_engines.js"); } catch (_e) {} }
+const DT = 0.05, SIGMA_SB = 5.670374419e-8, T_AMB = 295.0, EMISSIVITY = 0.82, TUBE_R = 1.0, TUBE_HALF = 1.8;
 const SMAC_LIMITS = { co2: [5000, 20000], hcn: [1.0, 5.0], hcl: [2.0, 10.0], nox: [3.0, 15.0], so2: [1.0, 5.0], hf: [0.5, 3.0] };
 const GAS_PROFILES = {
   pmma: { co2: 1850, hcn: 0, hcl: 0, nox: 1.4, so2: 0, hf: 0 }, cotton: { co2: 2100, hcn: 0, hcl: 0, nox: 1.2, so2: 0, hf: 0 },
@@ -9,33 +9,35 @@ const GAS_PROFILES = {
 };
 const CAT_FALLBACK = { solid: { co2: 1750, hcn: 0, hcl: 0, nox: 1.4, so2: 0, hf: 0 }, liquid: { co2: 2300, hcn: 0, hcl: 0, nox: 2.0, so2: 0, hf: 0 }, gas: { co2: 2200, hcn: 0, hcl: 0, nox: 2.2, so2: 0, hf: 0 } };
 const ECRIT_BASE = { gas: 35, liquid: 65, solid: 110 };
-
+// Compute Shader: cinemática de 256 partículas confinadas al tubo (radius <= tubeR, |y| <= tubeHalf) con reciclaje a la zona de reacción.
 const COMPUTE_WGSL = `
-struct SimParams { p0: vec4<f32>, p1: vec4<f32> };
+struct SimParams { p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32> };
 @group(0) @binding(0) var<storage, read_write> state_buf : array<vec4<f32>, 256>;
 @group(0) @binding(1) var<uniform> sim_params : SimParams;
 @compute @workgroup_size(256)
 fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let idx = gid.x; if (idx >= 256u) { return; }
-  let dt = sim_params.p0.x; let ignW = sim_params.p0.y; let o2 = sim_params.p0.z;
-  let flow = sim_params.p1.x; let baseVf = sim_params.p1.y; let damp = sim_params.p1.w; let rad = f32(idx) / 255.0;
-  let localIgn = state_buf[idx].x + ignW * dt * exp(-rad * 2.5);
-  let vf = select(0.0, baseVf * (1.0 + 0.14 * log(1.0 + max(0.0, flow))) * damp, o2 >= 12.0 && sim_params.p1.z > 0.5);
-  let tk = 295.0 + clamp(vf * 260.0 + o2 * 20.0, 0.0, 2150.0) * exp(-rad * 1.4);
-  let radKw = 0.82 * 5.6703744e-8 * (pow(tk, 4.0) - pow(295.0, 4.0)) / 1000.0;
-  state_buf[idx] = vec4<f32>(localIgn, vf, radKw, state_buf[idx].w + vf * dt * 0.18 * (1.0 + 0.35 * (1.0 - min(1.0, flow * 0.5))));
+  let fi = f32(idx); let t = sim_params.p2.x; let gEff = sim_params.p2.y; let tubeR = sim_params.p2.z; let tubeH = sim_params.p2.w;
+  let flow = sim_params.p1.x; let vf = sim_params.p1.y * sim_params.p1.w * select(0.0, 1.0, sim_params.p0.z >= 12.0 && sim_params.p1.z > 0.5);
+  let ph = fract(t * (0.2 + vf * 0.02 + flow * 0.018) + fi * 0.137);
+  let phi = fi * 2.399963; let cz = 1.0 - 2.0 * fract(fi * 0.618034); let sz = sqrt(max(0.0, 1.0 - cz * cz));
+  let r = 0.3 + ph * tubeR; var p = vec3<f32>(sz * cos(phi) * r, cz * r * 0.7, sz * sin(phi) * r);
+  p.y = p.y + ph * (flow * 0.045 + 1.6 * sqrt(max(gEff, 0.0)));
+  let rad = length(p.xz); let lim = tubeR * 0.94;
+  if (rad > lim) { p.x = p.x * lim / rad; p.z = p.z * lim / rad; }
+  if (abs(p.y) > tubeH * 0.97) { p = vec3<f32>(p.x * 0.3, cz * 0.15, p.z * 0.3); }
+  state_buf[idx] = vec4<f32>(p, ph);
 }`;
-
 const state = {
   materialName: "Cotton Fabric", category: "Solid", oxygenPct: 21.0, pressurePsi: 14.7, airflowCms: 10.0,
   igniterPowerW: 120.0, burnRateBaseMms: 2.1, flameColorHex: "#f59e0b", sphereRadiusScale: 1.0, riskScore: 55,
   ignEnergyJ: 0.0, eCritJ: 110.0, isIgnited: false, tempK: T_AMB, burnRateMms: 0.0, radiativeLossKw: 0.0,
   co2Damping: 1.0, elapsedSec: 0.0, gases: { co2: 420.0, hcn: 0.0, hcl: 0.0, nox: 0.0, so2: 0.0, hf: 0.0 },
+  gLevel: 0.0, gJitter: 0, gEff: 0.0, fuelConsumedMm: 0.0, filter: [true, true, true, true, true],
 };
 const particleBuf = new Float32Array(256 * 4);
 let running = false, viewMode = "3d", lastTickMs = 0, off2dRef = null, ctx2d = null, dpr2d = 1;
 let gpuDevice = null, computePipe = null, computeBG = null, stateBuf = null, simUniformBuf = null, initPromise = null;
-
 function selectGasProfile(name, cat) {
   const low = String(name || "").toLowerCase();
   for (const [k, v] of Object.entries(GAS_PROFILES)) { if (low.includes(k)) return v; }
@@ -43,25 +45,29 @@ function selectGasProfile(name, cat) {
 }
 const classifyAlert = (v, [w, c]) => (v >= c ? "CRITICAL" : v >= w ? "WARNING" : "SAFE");
 const worstAlert = (a) => (Object.values(a).includes("CRITICAL") ? "CRITICAL" : Object.values(a).includes("WARNING") ? "WARNING" : "SAFE");
-
+const fuelKindOf = (name, cat) => { const n = String(name || "").toLowerCase(), c = String(cat || "").toLowerCase(); return c === "gas" ? "gas" : c === "liquid" ? "droplet" : n.includes("cotton") || n.includes("fabric") ? "cotton" : "pmma"; };
+// PMMA: r(t)=r0-kp·Vf·t (r0=20 mm) | Algodón: frente=Vf·t/40 mm | n-Heptano: D²(t)=D0²-K·t (K·t=0.12·Vf·t) | Gas: inyector continuo.
+function fuelGeometry() {
+  const kind = fuelKindOf(state.materialName, state.category), x = state.fuelConsumedMm;
+  const remaining = kind === "pmma" ? Math.max(0.2, 1 - x / 20) : kind === "cotton" ? Math.max(0, 1 - x / 40) : kind === "droplet" ? Math.sqrt(Math.max(0.0225, 1 - 0.12 * x)) : 1;
+  return { kind, remaining, flameY: kind === "cotton" ? -0.45 + (1 - remaining) * 0.9 : 0 };
+}
 function resetSimulation(keepIgnited = false) {
-  state.ignEnergyJ = 0.0; state.isIgnited = keepIgnited && state.oxygenPct >= 12.0; state.tempK = T_AMB;
+  state.ignEnergyJ = 0.0; state.isIgnited = keepIgnited && state.oxygenPct >= 12.0; state.tempK = T_AMB; state.fuelConsumedMm = 0.0;
   state.burnRateMms = 0.0; state.radiativeLossKw = 0.0; state.co2Damping = 1.0; state.elapsedSec = 0.0;
   state.gases = { co2: 420.0, hcn: 0.0, hcl: 0.0, nox: 0.0, so2: 0.0, hf: 0.0 }; particleBuf.fill(0);
 }
 function applyParams(p = {}) {
-  for (const k of ["materialName", "category", "oxygenPct", "pressurePsi", "airflowCms", "igniterPowerW", "burnRateBaseMms", "flameColorHex", "sphereRadiusScale", "riskScore"]) {
+  if (p.materialName !== undefined && String(p.materialName) !== state.materialName) state.fuelConsumedMm = 0.0;
+  for (const k of ["materialName", "category", "oxygenPct", "pressurePsi", "airflowCms", "igniterPowerW", "burnRateBaseMms", "flameColorHex", "sphereRadiusScale", "riskScore", "gLevel", "gJitter"]) {
     if (p[k] !== undefined) state[k] = typeof state[k] === "number" ? Number(p[k]) : String(p[k]);
   }
-  state.igniterPowerW = Math.max(0, state.igniterPowerW); state.burnRateBaseMms = Math.max(0.05, state.burnRateBaseMms);
+  state.igniterPowerW = Math.max(0, state.igniterPowerW); state.burnRateBaseMms = Math.max(0.05, state.burnRateBaseMms); state.gLevel = Math.max(0, state.gLevel || 0);
 }
 function resizeOffscreen2D(sz) {
   if (!off2dRef || !sz) return;
-  dpr2d = Math.max(1, Number(sz.dpr) || 1);
-  off2dRef.width = Math.max(1, Math.floor(Math.max(120, Number(sz.width) || 320) * dpr2d));
-  off2dRef.height = Math.max(1, Math.floor(Math.max(120, Number(sz.height) || 240) * dpr2d));
+  dpr2d = Math.max(1, Number(sz.dpr) || 1); off2dRef.width = Math.max(1, Math.floor(Math.max(120, Number(sz.width) || 320) * dpr2d)); off2dRef.height = Math.max(1, Math.floor(Math.max(120, Number(sz.height) || 240) * dpr2d));
 }
-
 async function ensureGPUCompute() {
   if (initPromise) return initPromise;
   initPromise = (async () => {
@@ -69,59 +75,52 @@ async function ensureGPUCompute() {
       const adapter = globalThis.navigator?.gpu ? await globalThis.navigator.gpu.requestAdapter() : null;
       if (adapter) {
         gpuDevice = await adapter.requestDevice();
-        const mod = gpuDevice.createShaderModule({ code: COMPUTE_WGSL });
-        computePipe = gpuDevice.createComputePipeline({ layout: "auto", compute: { module: mod, entryPoint: "cs_main" } });
+        computePipe = gpuDevice.createComputePipeline({ layout: "auto", compute: { module: gpuDevice.createShaderModule({ code: COMPUTE_WGSL }), entryPoint: "cs_main" } });
         stateBuf = gpuDevice.createBuffer({ size: 256 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
-        simUniformBuf = gpuDevice.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        simUniformBuf = gpuDevice.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         computeBG = gpuDevice.createBindGroup({ layout: computePipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: stateBuf } }, { binding: 1, resource: { buffer: simUniformBuf } }] });
       }
-    } catch (_e) { gpuDevice = null; }
+    } catch (_e) { gpuDevice = null; computePipe = null; }
     if (typeof self.postMessage === "function") self.postMessage({ type: "RENDER_MODE", gpuComputeActive: Boolean(computePipe), mode2d: ctx2d ? "OffscreenCanvas 2D" : "Standby" });
   })();
   return initPromise;
 }
-
 function dispatchGPUCompute() {
   if (!gpuDevice || !computePipe || !computeBG) return;
-  gpuDevice.queue.writeBuffer(simUniformBuf, 0, new Float32Array([DT, state.igniterPowerW, state.oxygenPct, state.pressurePsi, state.airflowCms, state.burnRateBaseMms, state.isIgnited ? 1 : 0, state.co2Damping]));
+  gpuDevice.queue.writeBuffer(simUniformBuf, 0, new Float32Array([DT, state.igniterPowerW, state.oxygenPct, state.pressurePsi, state.airflowCms, state.burnRateBaseMms, state.isIgnited ? 1 : 0, state.co2Damping, state.elapsedSec, state.gEff, TUBE_R, TUBE_HALF]));
   const enc = gpuDevice.createCommandEncoder(), pass = enc.beginComputePass();
   pass.setPipeline(computePipe); pass.setBindGroup(0, computeBG); pass.dispatchWorkgroups(1); pass.end(); gpuDevice.queue.submit([enc.finish()]);
 }
-function updateParticlesCPU(toxRatio) {
-  const spread = (state.isIgnited ? state.sphereRadiusScale : 0.45) * 0.65, drift = Math.min(1.1, state.airflowCms * 0.015), t = state.elapsedSec;
-  for (let i = 0; i < 256; i++) {
-    const phi = i * 2.399963, cost = 1 - (2 * (i + 0.5)) / 256, sint = Math.sqrt(Math.max(0, 1 - cost * cost));
-    const radial = spread + ((t * (0.4 + state.burnRateMms * 0.08) + i * 0.017) % 1.15);
-    particleBuf[i * 4] = sint * Math.cos(phi + t * 0.4) * radial + drift * (radial - spread * 0.4);
-    particleBuf[i * 4 + 1] = cost * radial * 0.85; particleBuf[i * 4 + 2] = sint * Math.sin(phi + t * 0.4) * radial;
-    particleBuf[i * 4 + 3] = Math.min(1.0, (state.isIgnited ? 0.35 : 0.08) + toxRatio * 0.65 * (1.0 - (i % 7) * 0.1));
-  }
+// Especies: 0 Llama/Hollín | 1 CO2 | 2 NOx | 3 Tóxicos (HCN/HCl/SO2/HF; 0 ppm => 0 partículas) | 4 Flujo O2 | 9 inactiva. w = especie + intensidad.
+function speciesCounts(g) {
+  const tox = g.hcn / 5 + g.hcl / 10 + g.so2 / 5 + g.hf / 3;
+  return [state.isIgnited ? 70 : 0, g.co2 > 450 ? Math.round(6 + 54 * Math.min(1, (g.co2 - 420) / 20000)) : 0, g.nox > 0.001 ? Math.round(8 + 32 * Math.min(1, g.nox / 15)) : 0,
+    tox > 0.0001 ? Math.round(10 + 30 * Math.min(1, tox / 2)) : 0, state.oxygenPct > 0 && state.airflowCms > 0 ? Math.round(Math.min(50, 6 + state.airflowCms * 2.2)) : 0];
 }
-
-function render2DOffscreen(s) {
-  if (!ctx2d || !off2dRef) return;
-  const c = ctx2d, cw = off2dRef.width, ch = off2dRef.height, cy = ch * 0.42, cx = cw * 0.45;
-  const r = Math.min(cw, ch) * 0.18 * (s.sphereRadiusScale || 0.7), sx = Math.min(cw * 0.14, (s.airflowCms || 0) * cw * 0.004);
-  c.clearRect(0, 0, cw, ch); c.fillStyle = "#090e1c"; c.fillRect(0, 0, cw, ch);
-  const grad = c.createRadialGradient(cx + sx, cy, r * 0.08, cx + sx, cy, r * 2.2);
-  grad.addColorStop(0, s.isIgnited ? "#ffffff" : "#64748b"); grad.addColorStop(0.25, s.flameColorHex || "#38bdf8");
-  grad.addColorStop(0.65, "rgba(239,68,68,0.22)"); grad.addColorStop(1, "rgba(9,14,28,0)");
-  c.fillStyle = grad; c.beginPath(); c.ellipse(cx + sx, cy, r * (2.2 + (s.airflowCms || 0) * 0.02), r * 2.0, 0, 0, Math.PI * 2); c.fill();
-  c.strokeStyle = s.igniterPowerW > 0 ? "#fb923c" : "#334155"; c.lineWidth = Math.max(1.5, dpr2d * 1.5);
-  c.beginPath(); c.moveTo(cw * 0.08, cy); c.lineTo(cx - r * 0.3, cy); c.stroke();
-  c.strokeStyle = "rgba(56,189,248,0.45)"; c.fillStyle = "#e2e8f0"; c.font = `${(0.7 * dpr2d).toFixed(2)}rem system-ui`;
-  for (let y = 0.2; y <= 0.65; y += 0.22) { c.beginPath(); c.moveTo(cw * 0.05, ch * y); c.lineTo(cw * 0.05 + cw * 0.08 * Math.min(2, (s.airflowCms || 1) / 10), ch * y); c.stroke(); }
-  c.fillText(`Vf=${s.propagationSpeedMms} mm/s | Ign=${s.igniterPowerW} W (${s.isIgnited ? "ON" : "PRE"})`, cw * 0.03, ch * 0.09);
-  [["CO2", s.co2_ppm, 20000], ["HCN", s.hcn_ppm, 5], ["HCl", s.hcl_ppm, 10], ["NOx", s.nox_ppm, 15], ["SO2", s.so2_ppm, 5], ["HF", s.hf_ppm, 3]].forEach(([lbl, val, max], i) => {
-    const bx = cw * (0.04 + i * 0.155), bw = cw * 0.13, by = ch * 0.85, pct = Math.min(1, (val || 0) / max);
-    c.fillStyle = "#1e293b"; c.fillRect(bx, by, bw, ch * 0.05); c.fillStyle = pct > 0.7 ? "#ef4444" : pct > 0.3 ? "#f59e0b" : "#38bdf8";
-    c.fillRect(bx, by, bw * pct, ch * 0.05); c.fillStyle = "#cbd5e1"; c.fillText(`${lbl}:${Number(val || 0).toFixed(1)}`, bx, by - ch * 0.025);
-  });
+function placeParticle(i, s, t, uBuoy, flameR, fy) {
+  const phi = i * 2.399963, cz = 1 - 2 * ((i * 0.618034) % 1), sz = Math.sqrt(Math.max(0, 1 - cz * cz)), flow = state.airflowCms * 0.03;
+  const ph = (t * (s === 4 ? 0.12 + flow : 0.18 + flow * 0.5 + uBuoy * 0.4 + state.burnRateMms * 0.015) + i * 0.137) % 1;
+  let x, y, z;
+  if (s === 4) { const rr = TUBE_R * (0.55 + 0.38 * ((i * 0.381966) % 1)); x = Math.cos(phi) * rr; z = Math.sin(phi) * rr; y = -TUBE_HALF + ph * 2 * TUBE_HALF; }
+  else if (s === 0) { const rr = flameR * (0.85 + 0.3 * ph); x = sz * Math.cos(phi + t) * rr; z = sz * Math.sin(phi + t) * rr; y = fy + cz * rr * (1 + uBuoy * 1.4) + uBuoy * flameR * ph; }
+  else { const rr = flameR + ph * TUBE_R * 1.1; x = sz * Math.cos(phi) * rr; z = sz * Math.sin(phi) * rr; y = fy + cz * rr * 0.7 + ph * (flow * 1.4 + uBuoy * 1.8); }
+  const rad = Math.hypot(x, z), lim = TUBE_R * 0.94;
+  if (rad > lim) { x *= lim / rad; z *= lim / rad; }
+  if (Math.abs(y) > TUBE_HALF * 0.97) { x *= 0.3; z *= 0.3; y = fy + cz * flameR * 0.5; }
+  return [x, y, z, ph];
 }
-
+function updateParticlesCPU(uBuoy, fy) {
+  const counts = speciesCounts(state.gases), t = state.elapsedSec, flameR = 0.35 * Math.max(0.6, Math.min(1.6, state.sphereRadiusScale));
+  let i = 0;
+  counts.forEach((n, s) => { for (let k = 0; k < n && i < 256; k++, i++) { const [x, y, z, ph] = placeParticle(i, s, t, uBuoy, flameR, fy); particleBuf.set([x, y, z, s + Math.min(0.99, 0.25 + 0.7 * (1 - ph))], i * 4); } });
+  for (; i < 256; i++) particleBuf.set([0, 0, 0, 9], i * 4);
+  return counts;
+}
+function render2DOffscreen(s) { if (ctx2d && off2dRef && globalThis.NasaRenderers) globalThis.NasaRenderers.paintChamber2D(ctx2d, off2dRef.width, off2dRef.height, s, particleBuf, state.filter, dpr2d); }
 function stepPhysics() {
   state.elapsedSec += DT;
-  const baseCrit = ECRIT_BASE[String(state.category || "solid").toLowerCase()] || 110;
+  state.gEff = Math.max(0, state.gLevel * (1 + (state.gJitter ? 0.6 * Math.sin(state.elapsedSec * 9.0) : 0)));
+  const uBuoy = 0.9 * Math.sqrt(state.gEff), baseCrit = ECRIT_BASE[String(state.category || "solid").toLowerCase()] || 110;
   state.eCritJ = Number((baseCrit * (21.0 / Math.max(12.0, state.oxygenPct)) * Math.pow(14.7 / Math.max(2.0, state.pressurePsi), 0.25)).toFixed(2));
   if (state.oxygenPct < 12.0) state.isIgnited = false;
   else if (!state.isIgnited) {
@@ -140,10 +139,11 @@ function stepPhysics() {
     const co2Cap = Math.min(950000, state.oxygenPct * 9500), ventDecay = Math.max(0.0, 1.0 - state.airflowCms * 0.0015 * DT);
     state.gases.co2 = Math.min(co2Cap, state.gases.co2 * ventDecay + prof.co2 * massStep * Math.max(0.0, 1.0 - state.gases.co2 / co2Cap));
     for (const k of ["hcn", "hcl", "nox", "so2", "hf"]) state.gases[k] = Math.min(25000, state.gases[k] * ventDecay + prof[k] * massStep);
+    state.fuelConsumedMm += state.burnRateMms * DT;
   }
   state.radiativeLossKw = Math.max(0.0, (EMISSIVITY * SIGMA_SB * (Math.pow(state.tempK, 4) - Math.pow(T_AMB, 4))) / 1000.0);
   dispatchGPUCompute();
-  updateParticlesCPU(Math.min(1, (state.gases.hcn / 5 + state.gases.hcl / 10 + state.gases.nox / 15 + state.gases.so2 / 5 + state.gases.hf / 3 + state.gases.co2 / 20000) / 3));
+  const fuel = fuelGeometry(), counts = updateParticlesCPU(uBuoy, fuel.flameY);
   const gasAlerts = Object.fromEntries(Object.entries(SMAC_LIMITS).map(([g, lim]) => [g, classifyAlert(state.gases[g], lim)]));
   const radKw = Number(state.radiativeLossKw.toFixed(2)), vf = Number(state.burnRateMms.toFixed(3));
   return {
@@ -155,9 +155,10 @@ function stepPhysics() {
     co2_ppm: Number(state.gases.co2.toFixed(1)), hcn_ppm: Number(state.gases.hcn.toFixed(2)), hcl_ppm: Number(state.gases.hcl.toFixed(2)),
     nox_ppm: Number(state.gases.nox.toFixed(2)), so2_ppm: Number(state.gases.so2.toFixed(2)), hf_ppm: Number(state.gases.hf.toFixed(2)),
     gasAlerts, overallGasStatus: worstAlert(gasAlerts), gpuComputeActive: Boolean(computePipe),
+    gLevel: state.gLevel, gEff: Number(state.gEff.toFixed(4)), buoyancyStretch: Number((1 + uBuoy * 1.4).toFixed(3)),
+    fuelKind: fuel.kind, fuelRemaining: Number(fuel.remaining.toFixed(3)), flameCenterY: Number(fuel.flameY.toFixed(3)), speciesCounts: counts,
   };
 }
-
 const scheduleTick = typeof self.requestAnimationFrame === "function" ? self.requestAnimationFrame.bind(self) : (fn) => setTimeout(fn, 50);
 function workerLoop() {
   if (!running) return;
@@ -170,7 +171,7 @@ self.onmessage = async (event) => {
   const m = event.data || {};
   if (m.type === "START_SIMULATION") {
     const c2d = m.canvas2d || m.off2d; if (c2d && !off2dRef) { off2dRef = c2d; ctx2d = off2dRef.getContext("2d"); }
-    if (m.viewMode) viewMode = m.viewMode;
+    if (m.viewMode) viewMode = m.viewMode; if (Array.isArray(m.filter)) state.filter = m.filter.slice(0, 5).map(Boolean);
     resizeOffscreen2D(m.sizes?.s2d || m.sizes); applyParams(m.params || m.payload || {}); await ensureGPUCompute();
     if (!running) { running = true; lastTickMs = 0; scheduleTick(workerLoop); }
   } else if (m.type === "UPDATE_PARAMS") { applyParams(m.params || m.payload || {}); }
@@ -179,5 +180,6 @@ self.onmessage = async (event) => {
     applyParams({ burnRateBaseMms: d.predicted_burn_rate_mms, flameColorHex: d.flame_color_hex, sphereRadiusScale: d.sphere_radius_scale, riskScore: d.calculated_risk_score });
   } else if (m.type === "RESIZE_CANVAS") { resizeOffscreen2D(m.s2d || m.sizes?.s2d); }
   else if (m.type === "SET_VIEW_MODE") { viewMode = m.viewMode || viewMode; }
+  else if (m.type === "SET_SPECIES_FILTER" && Array.isArray(m.filter)) { state.filter = m.filter.slice(0, 5).map(Boolean); }
   else if (m.type === "RESET_CHAMBER" || m.type === "reset") { resetSimulation(Boolean(m.keepIgnited)); }
 };
