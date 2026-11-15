@@ -1,5 +1,5 @@
 "use strict";
-if (typeof importScripts === "function") { try { importScripts("render_engines.js"); } catch (_e) {} }
+if (typeof importScripts === "function") { try { importScripts("render_engines.js"); } catch (_e) { } }
 const DT = 0.05, SIGMA_SB = 5.670374419e-8, T_AMB = 295.0, EMISSIVITY = 0.82, TUBE_R = 1.0, TUBE_HALF = 1.8;
 const SMAC_LIMITS = { co2: [5000, 20000], hcn: [1.0, 5.0], hcl: [2.0, 10.0], nox: [3.0, 15.0], so2: [1.0, 5.0], hf: [0.5, 3.0] };
 const GAS_PROFILES = {
@@ -9,23 +9,24 @@ const GAS_PROFILES = {
 };
 const CAT_FALLBACK = { solid: { co2: 1750, hcn: 0, hcl: 0, nox: 1.4, so2: 0, hf: 0 }, liquid: { co2: 2300, hcn: 0, hcl: 0, nox: 2.0, so2: 0, hf: 0 }, gas: { co2: 2200, hcn: 0, hcl: 0, nox: 2.2, so2: 0, hf: 0 } };
 const ECRIT_BASE = { gas: 35, liquid: 65, solid: 110 };
-// Compute Shader: cinemática de 256 partículas confinadas al tubo (radius <= tubeR, |y| <= tubeHalf) con reciclaje a la zona de reacción.
+// Compute Shader: cinemática turbulenta estocástica de 256 partículas confinadas al tubo.
 const COMPUTE_WGSL = `
 struct SimParams { p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32> };
 @group(0) @binding(0) var<storage, read_write> state_buf : array<vec4<f32>, 256>;
 @group(0) @binding(1) var<uniform> sim_params : SimParams;
+fn hsh(n: f32) -> f32 { return fract(sin(n * 127.1 + 311.7) * 43758.5453); }
 @compute @workgroup_size(256)
 fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
   let idx = gid.x; if (idx >= 256u) { return; }
   let fi = f32(idx); let t = sim_params.p2.x; let gEff = sim_params.p2.y; let tubeR = sim_params.p2.z; let tubeH = sim_params.p2.w;
   let flow = sim_params.p1.x; let vf = sim_params.p1.y * sim_params.p1.w * select(0.0, 1.0, sim_params.p0.z >= 12.0 && sim_params.p1.z > 0.5);
-  let ph = fract(t * (0.2 + vf * 0.02 + flow * 0.018) + fi * 0.137);
-  let phi = fi * 2.399963; let cz = 1.0 - 2.0 * fract(fi * 0.618034); let sz = sqrt(max(0.0, 1.0 - cz * cz));
-  let r = 0.3 + ph * tubeR; var p = vec3<f32>(sz * cos(phi) * r, cz * r * 0.7, sz * sin(phi) * r);
-  p.y = p.y + ph * (flow * 0.045 + 1.6 * sqrt(max(gEff, 0.0)));
-  let rad = length(p.xz); let lim = tubeR * 0.94;
+  let ph = fract(t * (0.18 + vf * 0.02 + flow * 0.015) + hsh(fi * 1.73)); let phi = hsh(fi * 3.17 + 1.2) * 6.283185 + sin(t * 1.4 + fi) * 0.45;
+  let cz = hsh(fi * 5.41 + 2.7) * 2.0 - 1.0; let sz = sqrt(max(0.0, 1.0 - cz * cz));
+  let r = (0.12 + 0.85 * sqrt(hsh(fi * 7.13))) * (0.25 + ph * tubeR * 0.9);
+  var p = vec3<f32>(sz * cos(phi) * r, cz * r * 0.65 + ph * (flow * 0.04 + 1.5 * sqrt(max(gEff, 0.0))), sz * sin(phi) * r);
+  let rad = length(p.xz); let lim = tubeR * 0.92;
   if (rad > lim) { p.x = p.x * lim / rad; p.z = p.z * lim / rad; }
-  if (abs(p.y) > tubeH * 0.97) { p = vec3<f32>(p.x * 0.3, cz * 0.15, p.z * 0.3); }
+  if (abs(p.y) > tubeH * 0.96) { p = vec3<f32>(p.x * 0.25, cz * 0.12, p.z * 0.25); }
   state_buf[idx] = vec4<f32>(p, ph);
 }`;
 const state = {
@@ -95,18 +96,20 @@ function dispatchGPUCompute() {
 function speciesCounts(g) {
   const tox = g.hcn / 5 + g.hcl / 10 + g.so2 / 5 + g.hf / 3;
   return [state.isIgnited ? 70 : 0, g.co2 > 450 ? Math.round(6 + 54 * Math.min(1, (g.co2 - 420) / 20000)) : 0, g.nox > 0.001 ? Math.round(8 + 32 * Math.min(1, g.nox / 15)) : 0,
-    tox > 0.0001 ? Math.round(10 + 30 * Math.min(1, tox / 2)) : 0, state.oxygenPct > 0 && state.airflowCms > 0 ? Math.round(Math.min(50, 6 + state.airflowCms * 2.2)) : 0];
+  tox > 0.0001 ? Math.round(10 + 30 * Math.min(1, tox / 2)) : 0, state.oxygenPct > 0 && state.airflowCms > 0 ? Math.round(Math.min(50, 6 + state.airflowCms * 2.2)) : 0];
 }
+const hsh = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 function placeParticle(i, s, t, uBuoy, flameR, fy) {
-  const phi = i * 2.399963, cz = 1 - 2 * ((i * 0.618034) % 1), sz = Math.sqrt(Math.max(0, 1 - cz * cz)), flow = state.airflowCms * 0.03;
-  const ph = (t * (s === 4 ? 0.12 + flow : 0.18 + flow * 0.5 + uBuoy * 0.4 + state.burnRateMms * 0.015) + i * 0.137) % 1;
-  let x, y, z;
-  if (s === 4) { const rr = TUBE_R * (0.55 + 0.38 * ((i * 0.381966) % 1)); x = Math.cos(phi) * rr; z = Math.sin(phi) * rr; y = -TUBE_HALF + ph * 2 * TUBE_HALF; }
-  else if (s === 0) { const rr = flameR * (0.85 + 0.3 * ph); x = sz * Math.cos(phi + t) * rr; z = sz * Math.sin(phi + t) * rr; y = fy + cz * rr * (1 + uBuoy * 1.4) + uBuoy * flameR * ph; }
-  else { const rr = flameR + ph * TUBE_R * 1.1; x = sz * Math.cos(phi) * rr; z = sz * Math.sin(phi) * rr; y = fy + cz * rr * 0.7 + ph * (flow * 1.4 + uBuoy * 1.8); }
-  const rad = Math.hypot(x, z), lim = TUBE_R * 0.94;
+  const phi = hsh(i * 3.17 + 1.2) * 6.283185 + Math.sin(t * 1.3 + i * 0.7) * 0.45, cz = hsh(i * 5.41 + 2.7) * 2 - 1;
+  const sz = Math.sqrt(Math.max(0, 1 - cz * cz)), flow = state.airflowCms * 0.03, jit = Math.sin(t * 2.1 + i * 1.9) * 0.12;
+  const ph = (t * (s === 4 ? 0.12 + flow : 0.16 + flow * 0.45 + uBuoy * 0.35 + state.burnRateMms * 0.015) + hsh(i * 1.73)) % 1;
+  const radN = 0.25 + 0.75 * Math.sqrt(hsh(i * 7.13)); let x, y, z;
+  if (s === 4) { const rr = TUBE_R * (0.2 + 0.72 * Math.sqrt(hsh(i * 2.31))); x = Math.cos(phi) * rr + jit; z = Math.sin(phi) * rr; y = -TUBE_HALF + ph * 2 * TUBE_HALF; }
+  else if (s === 0) { const rr = flameR * radN * (0.65 + 0.55 * ph); x = sz * Math.cos(phi) * rr + jit * 0.5; z = sz * Math.sin(phi) * rr; y = fy + cz * rr * (0.9 + uBuoy * 1.4) + uBuoy * flameR * ph; }
+  else { const rr = (flameR * 0.6 + ph * TUBE_R * 0.95) * radN; x = sz * Math.cos(phi) * rr + jit; z = sz * Math.sin(phi) * rr - jit * 0.6; y = fy + cz * rr * 0.65 + ph * (flow * 1.3 + uBuoy * 1.7); }
+  const rad = Math.hypot(x, z), lim = TUBE_R * 0.92;
   if (rad > lim) { x *= lim / rad; z *= lim / rad; }
-  if (Math.abs(y) > TUBE_HALF * 0.97) { x *= 0.3; z *= 0.3; y = fy + cz * flameR * 0.5; }
+  if (Math.abs(y) > TUBE_HALF * 0.96) { x *= 0.25; z *= 0.25; y = fy + cz * flameR * 0.4; }
   return [x, y, z, ph];
 }
 function updateParticlesCPU(uBuoy, fy) {

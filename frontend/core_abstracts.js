@@ -68,10 +68,15 @@
 
   class SimulationResultCard extends AbstractUICard {
     renderCard(d, layoutMode) {
+      const cell = (lbl, val) => `<div class="metric-cell"><span class="lbl">${lbl}</span><strong>${val}</strong></div>`;
+      const hex = escapeXSS(d.flame_color_hex || "#f59e0b");
       this.container.innerHTML = `<div class="${layoutMode === "compact" ? "metrics-col" : "metrics-row"}">
-        <div><strong>Material:</strong> ${escapeXSS(d.material_name)}</div><div><strong>Riesgo:</strong> ${escapeXSS(d.calculated_risk_score)} / 100</div>
-        <div><strong>Tasa Base:</strong> ${escapeXSS(d.predicted_burn_rate_mms)} mm/s</div><div><strong>Régimen:</strong> ${escapeXSS(d.outcome_prediction)}</div>
-        <div><strong>3D Flame:</strong> ${escapeXSS(d.flame_color_hex)} (${escapeXSS(d.sphere_radius_scale)}x)</div><div><strong>Caché:</strong> ${d.cache_hit ? "LRU Hit" : "Fresh RAG"}</div></div>`;
+        ${cell("Material", escapeXSS(d.material_name))}
+        ${cell("Risk Score", `${escapeXSS(d.calculated_risk_score)} / 100`)}
+        ${cell("Burn Rate Vf", `${escapeXSS(d.predicted_burn_rate_mms)} mm/s`)}
+        ${cell("Regime", escapeXSS(d.outcome_prediction))}
+        ${cell("3D Flame", `<span style="color:${hex}">●</span> ${hex} (${escapeXSS(d.sphere_radius_scale)}x)`)}
+        ${cell("RAG Cache", d.cache_hit ? "LRU Hit" : "Fresh RAG")}</div>`;
     }
   }
 
@@ -79,9 +84,10 @@
     renderCard(s, layoutMode) {
       const a = s.gasAlerts || {}, gases = [["CO2", s.co2_ppm, a.co2], ["HCN", s.hcn_ppm, a.hcn], ["HCl", s.hcl_ppm, a.hcl], ["NOx", s.nox_ppm, a.nox], ["SO2", s.so2_ppm, a.so2], ["HF", s.hf_ppm, a.hf]];
       const ignTxt = s.isIgnited ? "IGNITED" : s.igniterPowerW > 0 ? "PREHEAT" : "EXTINGUISHED";
+      const ignCls = s.isIgnited ? "badge-critical" : s.igniterPowerW > 0 ? "badge-warning" : "badge-safe";
       this.container.innerHTML = `<div class="${layoutMode === "compact" ? "chem-grid chem-compact" : "chem-grid"}">
-        <div class="chem-card"><span class="lbl">Ignition State</span><strong>${escapeXSS(ignTxt)}</strong><small>${escapeXSS(s.ignEnergyJ)}/${escapeXSS(s.eCritJ)} J</small></div>
-        <div class="chem-card"><span class="lbl">Propagation Speed</span><strong>${escapeXSS(s.propagationSpeedMms ?? s.burnRateMms)} mm/s</strong><small>CO2 damp ${escapeXSS(s.co2Damping)}</small></div>
+        <div class="chem-card ${ignCls}"><span class="lbl">Ignition State</span><strong>${escapeXSS(ignTxt)}</strong><small>${escapeXSS(s.ignEnergyJ)} / ${escapeXSS(s.eCritJ)} J</small></div>
+        <div class="chem-card"><span class="lbl">Propagation Vf</span><strong>${escapeXSS(s.propagationSpeedMms ?? s.burnRateMms)} mm/s</strong><small>CO2 damp ${escapeXSS(s.co2Damping)}</small></div>
         <div class="chem-card"><span class="lbl">Radiation / Tf</span><strong>${escapeXSS(s.radiationKwM2 ?? s.radiativeLossKw)} kW/m²</strong><small>${escapeXSS(s.tempK)} K</small></div>
         ${gases.map(([n, v, st]) => `<div class="chem-card badge-${escapeXSS(String(st || "SAFE").toLowerCase())}"><span class="lbl">${escapeXSS(n)}</span><strong>${escapeXSS(v)} ppm</strong><small>${escapeXSS(st || "SAFE")}</small></div>`).join("")}</div>`;
     }
@@ -92,6 +98,7 @@
     drop_tower: { o2: 21.0, psi: 14.7, flow: 5.0, gLevel: 1e-5, gJitter: 0 }, parabolic_flight: { o2: 21.0, psi: 14.7, flow: 10.0, gLevel: 0.01, gJitter: 1 },
     troposphere: { o2: 21.0, psi: 14.7, flow: 25.0, gLevel: 1.0, gJitter: 0 }, stratosphere: { o2: 21.0, psi: 0.8, flow: 15.0, gLevel: 0.99, gJitter: 0 },
     mesosphere: { o2: 21.0, psi: 0.1, flow: 5.0, gLevel: 0.97, gJitter: 0 }, thermosphere: { o2: 0.0, psi: 0.1, flow: 0.0, gLevel: 0.0, gJitter: 0 },
+    mars_038g: { o2: 0.13, psi: 0.09, flow: 12.0, gLevel: 0.38, gJitter: 0 },
   };
 
   class OffscreenSimulationController {
@@ -134,7 +141,8 @@
         if (typeof requestAnimationFrame === "function") requestAnimationFrame(sendSize); else sendSize();
       }
     }
-    pushParamsIfActive(params) { if (this.worker) this.worker.postMessage({ type: "UPDATE_PARAMS", params }); }
+    pushParamsIfActive(params) { if (this.r3d && params.envPreset) this.r3d.setEnvironment(params.envPreset, false); if (this.worker) this.worker.postMessage({ type: "UPDATE_PARAMS", params }); }
+    toggleMacroView() { return this.r3d ? this.r3d.toggleMacroView() : false; }
     resetChamber() { if (this.worker) this.worker.postMessage({ type: "RESET_CHAMBER" }); if (this.r3d) this.r3d.resetCamera(); }
     async runSimulation(params) {
       this.llmBadge.className = "badge-pill badge-warning"; this.llmBadge.textContent = "⏳ Running Model...";
@@ -146,6 +154,7 @@
         this.r3d = new window.NasaRenderers.ThreeJSFlameRenderer(); this.r3d.setFilter(this.filter); await this.r3d.init(this.viewport3d);
         if (this.lastTelemetry) this.r3d.render(this.lastTelemetry); this.gpuStatus.textContent = `${this.r3d.modeLabel} | Worker & GPU Compute`;
       }
+      if (this.r3d && params.envPreset) this.r3d.setEnvironment(params.envPreset, true);
       const t0 = performance.now();
       try {
         const data = await this.api.request("/simulate", { method: "POST", body: JSON.stringify({ material_id: params.materialId, custom_oxygen_pct: params.oxygenPct, custom_pressure_psi: params.pressurePsi, custom_airflow: params.airflowCms, query_context: params.queryContext || "", llm_model: params.llmModel || null }) });
