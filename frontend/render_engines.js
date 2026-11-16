@@ -131,7 +131,7 @@
         this.controls.addEventListener("start", () => { if (this.envSys) this.envSys.flyActive = false; }); this._buildScene(THREE);
         this.composer = new EffectComposer(this.renderer); this.composer.addPass(new RenderPass(this.scene, this.camera));
         this.bloomPass = new UnrealBloomPass(new THREE.Vector2(this.w, this.h), 0.48, 0.35, 0.55); this.composer.addPass(this.bloomPass);
-        this.bindResize(container); this.modeLabel = "3D PBR + Volumetric GLSL + Bloom";
+        this.bindResize(container); this.modeLabel = "Vista 3D";
         let prevT = 0;
         const tick = () => {
           const t = (performance.now() - this.t0) * 0.001, dt = Math.min(0.05, Math.max(0.001, t - prevT)); prevT = t; this.fireUniforms.uTime.value = t;
@@ -141,7 +141,7 @@
         };
         this.rafId = requestAnimationFrame(tick);
       } catch (err) {
-        this.fallback = true; this.modeLabel = "3D Fallback Canvas (corte del tubo)";
+        this.fallback = true; this.modeLabel = "Vista 2D";
         if (container && typeof document !== "undefined") { this.fbCanvas = document.createElement("canvas"); Object.assign(this.fbCanvas.style, { width: "100%", height: "100%", display: "block" }); container.appendChild(this.fbCanvas); this.fbCtx = this.fbCanvas.getContext("2d"); }
         this.bindResize(container); if (this.onFallback) this.onFallback(err.message);
       }

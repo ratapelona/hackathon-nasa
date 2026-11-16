@@ -77,7 +77,7 @@
   <canvas id="ambient_bg" class="ambient-bg"></canvas>
   <main class="stage">
     <div id="viewportGrid" class="viewport-grid">
-      <div id="viewport_3d" class="canvas-box">CIR-0G Chamber Standby — Hover Controls &amp; Press Run Simulation</div>
+      <div id="viewport_3d" class="canvas-box">Cámara 0G en espera — Abre Controles y pulsa Simular</div>
       <div id="box2d" class="canvas-box hidden"><canvas id="canvas_2d"></canvas></div>
     </div>
   </main>
@@ -85,21 +85,21 @@
   <div class="hud-layer">
     <header class="hud-topbar hud-surface">
       <div class="top-main">
-        <div class="brand-cluster"><svg width="32" height="27" viewBox="0 0 110 92" aria-label="NASA Emblem"><circle cx="52" cy="46" r="40" fill="#0b3d91"/><path d="M12 60 C40 34, 72 28, 102 18" stroke="#f64137" stroke-width="4.5" fill="none"/><path d="M22 68 L48 20 L62 56 L84 18" stroke="#ffffff" stroke-width="3.2" fill="none" stroke-linejoin="round"/></svg><div><span class="kicker">NASA Horizon // JPL Eyes HUD</span><h1>CIR-0G Fire Risk</h1></div></div>
-        <span class="live-pill">LIVE 0G</span><button id="btn3d" class="secondary active" type="button">3D</button><button id="btn2d" class="secondary" type="button">2D</button><button id="btnDual" class="secondary" type="button">Dual</button><button id="btnMacro" class="secondary" type="button">Contexto 3D</button><span id="gpuStatus" class="status">Standby</span>
+        <div class="brand-cluster"><svg width="32" height="27" viewBox="0 0 110 92" aria-label="NASA Emblem"><circle cx="52" cy="46" r="40" fill="#0b3d91"/><path d="M12 60 C40 34, 72 28, 102 18" stroke="#f64137" stroke-width="4.5" fill="none"/><path d="M22 68 L48 20 L62 56 L84 18" stroke="#ffffff" stroke-width="3.2" fill="none" stroke-linejoin="round"/></svg><div><span class="kicker">NASA CIR-0G</span><h1>Simulador de Incendios</h1></div></div>
+        <span class="live-pill">0G</span><button id="btn3d" class="secondary active" type="button">3D</button><button id="btn2d" class="secondary" type="button">2D</button><button id="btnDual" class="secondary" type="button">Dual</button><button id="btnMacro" class="secondary" type="button">Vista Planeta</button><span id="gpuStatus" class="status">Listo</span>
       </div>
       <div class="top-extra">
         <div id="speciesFilterBar" class="row-inline" style="margin-top:0">
-          <button class="secondary active" type="button" data-sp="all">Todas</button><button class="secondary active" type="button" data-sp="0">Llama</button><button class="secondary active" type="button" data-sp="1">CO2</button><button class="secondary active" type="button" data-sp="2">NOx</button><button class="secondary active" type="button" data-sp="3">Tóxicos HCN/HCl/SO2/HF</button><button class="secondary active" type="button" data-sp="4">Flujo O2</button>
+          <button class="secondary active" type="button" data-sp="all">Todas</button><button class="secondary active" type="button" data-sp="0">Llama</button><button class="secondary active" type="button" data-sp="1">CO2</button><button class="secondary active" type="button" data-sp="2">NOx</button><button class="secondary active" type="button" data-sp="3">Tóxicos</button><button class="secondary active" type="button" data-sp="4">Flujo O2</button>
         </div>
-        <button id="syncBtn" class="secondary" type="button">Sincronizar SQLite &amp; Chroma</button>
+        <button id="syncBtn" class="secondary" type="button">Actualizar Datos</button>
       </div>
     </header>
 
     <aside class="drawer drawer-left hud-surface" aria-label="Parámetros de Combustión">
-      <div class="drawer-rail"><span>⚙ Controls &amp; Run</span></div>
+      <div class="drawer-rail"><span>⚙ Controles</span></div>
       <section class="drawer-body">
-        <h2>Parámetros de Combustión 0g</h2>
+        <h2>Parámetros de Combustión</h2>
         <form id="simForm">
           <label for="matSelect">Material</label><select id="matSelect" required></select>
           <label for="env_preset">Entorno / Gravedad</label>
@@ -111,33 +111,33 @@
             <div style="flex:1"><label for="psiInput">PSI</label><input id="psiInput" type="number" step="any" min="0.01" max="50" value="14.7" required /></div>
             <div style="flex:1"><label for="flowInput">Flujo cm/s</label><input id="flowInput" type="number" step="any" min="0" max="500" value="10.0" required /></div>
           </div>
-          <label for="ignInput">Igniter Power (W)</label>
+          <label for="ignInput">Potencia de Ignición (W)</label>
           <div class="row-inline"><input id="ignRange" type="range" min="0" max="500" step="5" value="120" /><input id="ignInput" type="number" min="0" max="500" step="5" value="120" required /></div>
-          <label for="llmSelect">LLM Model</label>
-          <div class="row-inline"><select id="llmSelect"><option value="qwen3.5:9b">qwen3.5:9b (default)</option></select><button id="wakeupBtn" class="secondary" type="button">Wake Up</button></div>
-          <label class="row-inline" style="margin-top:0.4rem;cursor:pointer;color:var(--text-dim)"><input id="useLlmToggle" type="checkbox" style="width:auto;margin:0" /><span>Usar Modelo LLM (sin activar = 💤 zzz)</span></label>
+          <label for="llmSelect">Modelo de Análisis</label>
+          <div class="row-inline"><select id="llmSelect"><option value="qwen3.5:9b">qwen3.5:9b (default)</option></select><button id="wakeupBtn" class="secondary" type="button">Activar</button></div>
+          <label class="row-inline" style="margin-top:0.4rem;cursor:pointer;color:var(--text-dim)"><input id="useLlmToggle" type="checkbox" style="width:auto;margin:0" /><span>Análisis automático (apagado = 💤 zzz)</span></label>
           <label for="ctxInput">Contexto</label><input id="ctxInput" type="text" maxlength="500" placeholder="Ej. cabina presurizada" />
-          <div class="row-inline"><button id="btn_simulate" type="submit" style="flex:1">Run Simulation</button><button id="resetGasBtn" class="secondary" type="button" style="margin-top:0.55rem">Reset</button><button id="exportBtn" class="secondary" type="button" style="margin-top:0.55rem" disabled>Export</button></div>
+          <div class="row-inline"><button id="btn_simulate" type="submit" style="flex:1">Simular</button><button id="resetGasBtn" class="secondary" type="button" style="margin-top:0.55rem">Reiniciar</button><button id="exportBtn" class="secondary" type="button" style="margin-top:0.55rem" disabled>Exportar</button></div>
         </form>
         <div id="resultContainer" class="status" style="margin-top:0.55rem">Esperando ejecución...</div>
       </section>
     </aside>
 
-    <aside id="ai_analysis_panel" class="drawer drawer-right hud-surface" aria-label="AI RAG & Benchmarks">
-      <div class="drawer-rail"><span>◈ AI RAG &amp; PSI</span></div>
+    <aside id="ai_analysis_panel" class="drawer drawer-right hud-surface" aria-label="Análisis y Pruebas">
+      <div class="drawer-rail"><span>◈ Análisis y Pruebas</span></div>
       <section class="drawer-body">
         <div id="ai_analysis_box">
-          <div class="ai-header"><h2>AI / RAG Analysis</h2><span id="llm_status_badge" class="badge-pill">💤 zzz</span></div>
-          <div id="ai_conclusion_output" class="ai-output">Modelo LLM en reposo (zzz). Activa "Usar Modelo LLM" si deseas enviarle la simulación para análisis RAG.</div>
+          <div class="ai-header"><h2>Análisis del Experimento</h2><span id="llm_status_badge" class="badge-pill">💤 zzz</span></div>
+          <div id="ai_conclusion_output" class="ai-output">Análisis en reposo (💤 zzz). Activa "Análisis automático" si deseas evaluar la simulación.</div>
         </div>
-        <h2 style="margin-top:0.85rem;">Benchmarks NASA (SQL LIKE)</h2>
+        <h2 style="margin-top:0.85rem;">Pruebas Históricas NASA</h2>
         <label for="searchInput">Filtrar por material, código o resultado</label>
         <input id="searchInput" type="search" placeholder="Buscar ej. pmma, saffire..." />
-        <div id="benchList" class="status bench-list">Cargando benchmarks...</div>
+        <div id="benchList" class="status bench-list">Cargando pruebas...</div>
       </section>
     </aside>
 
-    <footer id="chemTelemetry" class="hud-bottom hud-surface status">Worker inactivo — telemetría química se activará al pulsar Run Simulation.</footer>
+    <footer id="chemTelemetry" class="hud-bottom hud-surface status">Telemetría química en espera — inicia una simulación para ver gases en vivo.</footer>
   </div>
 
   <script src="celestial_assets.js"></script><script src="env_scenes.js"></script><script src="render_engines.js"></script><script src="core_abstracts.js"></script>
