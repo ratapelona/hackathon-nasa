@@ -1,83 +1,547 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NASA CIR-0G Microgravity Fire Risk — JPL Eyes HUD &amp; WebGPU</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet" />
   <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/", "three/addons/controls/OrbitControls.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js", "three/addons/environments/RoomEnvironment.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/environments/RoomEnvironment.js", "three/addons/postprocessing/EffectComposer.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js", "three/addons/postprocessing/RenderPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js", "three/addons/postprocessing/UnrealBloomPass.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js" } }
   </script>
   <style>
-    :root { --bg:#04060b; --hud:rgba(20,22,28,0.8); --hud-hi:rgba(30,33,42,0.92); --border:#37373a; --accent:#288bff; --nasa-blue:#1c67e3; --nasa-red:#f64137; --nasa-red-dark:#b60109; --sand:#cbb296; --text:#ffffff; --text-dim:#d1d1d1; --muted:#959599; --ok:#47da84; --warn:#ea6f24; --crit:#f64137; --mono:"DM Mono",Consolas,monospace; --ease:cubic-bezier(0.2,0.2,0,1); --topo:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cg fill='none' stroke='%23288bff' stroke-opacity='0.14' stroke-width='0.9'%3E%3Cpath d='M-20 40Q40 5 110 45T240 40M-20 95Q55 55 120 100T240 90M-20 155Q45 120 115 160T240 150M-20 205Q60 175 130 210T240 200'/%3E%3Cellipse cx='110' cy='110' rx='68' ry='42'/%3E%3Cellipse cx='110' cy='110' rx='38' ry='22' stroke='%23cbb296' stroke-opacity='0.12'/%3E%3C/g%3E%3C/svg%3E"); }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; width: 100vw; height: 100vh; overflow: hidden; font-family: "Inter", system-ui, sans-serif; background: radial-gradient(circle at 50% 45%, #090d16 0%, #000000 78%); color: var(--text); letter-spacing: -0.01em; }
-    @keyframes topoDrift { 0% { background-position: 0 0, 0 0; } 100% { background-position: 14rem 14rem, 0 0; } }
-    .ambient-bg { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
-    .stage { position: fixed; inset: 0; z-index: 1; }
-    .viewport-grid { display: grid; width: 100%; height: 100%; grid-template-columns: 1fr; }
-    .viewport-grid.dual { grid-template-columns: 1fr 1fr; }
-    .canvas-box { width: 100%; height: 100%; background: transparent; display: flex; align-items: center; justify-content: center; color: var(--muted); font-family: var(--mono); font-size: 0.82rem; overflow: hidden; }
-    canvas { width: 100%; height: 100%; display: block; touch-action: none; }
-    .hidden { display: none !important; }
-    .hud-layer { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
-    .hud-layer > * { pointer-events: auto; }
-    .hud-surface { background-color: var(--hud); background-image: var(--topo), linear-gradient(135deg, rgba(40,139,255,0.06), rgba(203,178,150,0.03)); background-size: 14rem 14rem, 100% 100%; animation: topoDrift 28s linear infinite; border: 0.0625rem solid var(--border); border-radius: 0.375rem; backdrop-filter: blur(0.65rem); transition: background-color 0.25s var(--ease), border-color 0.25s var(--ease); }
-    .hud-surface:hover, .hud-surface:focus-within { background-color: var(--hud-hi); border-color: var(--accent); }
-    .hud-topbar { position: fixed; top: 0.75rem; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 0.45rem; padding: 0.45rem 0.9rem; max-width: 94vw; }
-    .top-main { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
-    .brand-cluster { display: flex; align-items: center; gap: 0.55rem; }
-    .kicker { font-family: var(--mono); font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); display: block; }
-    h1 { font-size: 0.92rem; font-weight: 600; margin: 0; letter-spacing: 0.06em; text-transform: uppercase; }
-    h2 { font-size: 0.78rem; font-weight: 600; margin: 0 0 0.55rem 0; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); border-left: 0.1875rem solid var(--accent); padding-left: 0.45rem; }
-    .top-extra { display: none; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.4rem; padding-top: 0.4rem; border-top: 0.0625rem solid #2e2e32; width: 100%; }
-    .hud-topbar:hover .top-extra, .hud-topbar:focus-within .top-extra { display: flex; }
-    .live-pill { font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.12em; text-transform: uppercase; padding: 0.16rem 0.45rem; border: 0.0625rem solid var(--nasa-red); border-radius: 0.125rem; background: rgba(246,65,55,0.18); }
-    .drawer { position: fixed; top: 4.4rem; bottom: 5.8rem; width: 2.8rem; overflow: hidden; transition: width 0.32s var(--ease), border-color 0.25s var(--ease), background-color 0.25s var(--ease); display: flex; flex-direction: column; }
-    .drawer-left { left: 0.75rem; } .drawer-right { right: 0.75rem; }
-    .drawer:hover, .drawer:focus-within { width: min(23.5rem, 88vw); }
-    .drawer-rail { min-height: 100%; width: 2.8rem; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
-    .drawer-rail span { writing-mode: vertical-rl; transform: rotate(180deg); font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); white-space: nowrap; }
-    .drawer:hover .drawer-rail, .drawer:focus-within .drawer-rail, .drawer-body { display: none; }
-    .drawer:hover .drawer-body, .drawer:focus-within .drawer-body { display: block; padding: 0.9rem; overflow-y: auto; height: 100%; width: min(23.5rem, 88vw); }
-    label { display: block; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 0.5rem; }
-    input, select, button { width: 100%; padding: 0.42rem 0.6rem; margin-top: 0.2rem; border-radius: 0.2rem; border: 0.0625rem solid #37373a; background: rgba(10,12,17,0.88); color: var(--text); font-family: inherit; font-size: 0.8rem; transition: border-color 0.2s var(--ease); }
-    input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 0.125rem rgba(40,139,255,0.28); }
-    input[type="range"] { padding: 0; accent-color: var(--accent); background: transparent; border: none; }
-    button { background: var(--nasa-red); border-color: var(--nasa-red); color: var(--text); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; font-size: 0.72rem; cursor: pointer; margin-top: 0.55rem; }
-    button:hover:not(:disabled) { background: var(--nasa-red-dark); border-color: var(--nasa-red-dark); }
-    button:disabled { opacity: 0.45; cursor: not-allowed; }
-    button.secondary { background: #1e1e22; border-color: #37373a; color: var(--text-dim); width: auto; text-transform: none; letter-spacing: 0.02em; font-weight: 500; margin-top: 0; padding: 0.34rem 0.58rem; }
-    button.secondary:hover:not(:disabled) { background: #2e2e32; border-color: var(--accent); color: var(--text); }
-    button.active { background: var(--nasa-blue); border-color: var(--accent); color: var(--text); box-shadow: inset 0 -0.125rem 0 var(--sand); }
-    .row-inline { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.35rem; }
-    .row-inline > input[type="range"], .row-inline > select { flex: 1; }
-    .row-inline > input[type="number"] { width: 4.8rem; font-family: var(--mono); }
-    .hud-bottom { position: fixed; bottom: 0.75rem; left: 50%; transform: translateX(-50%); width: min(68rem, 94vw); padding: 0.45rem 0.75rem; }
-    .chem-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(6.6rem, 1fr)); gap: 0.35rem; }
-    .chem-card { background: rgba(12,13,17,0.84); border: 0.0625rem solid #2e2e32; border-radius: 0.2rem; padding: 0.32rem 0.48rem; display: flex; flex-direction: column; gap: 0.05rem; font-size: 0.74rem; }
-    .chem-card .lbl, .metric-cell .lbl { font-family: var(--mono); color: var(--muted); font-size: 0.58rem; letter-spacing: 0.08em; text-transform: uppercase; }
-    .chem-card strong, .metric-cell strong { font-family: var(--mono); font-size: 0.8rem; font-variant-numeric: tabular-nums; color: var(--text); }
-    .chem-card small { font-family: var(--mono); font-size: 0.6rem; color: var(--muted); }
-    .badge-pill { display: inline-block; padding: 0.18rem 0.5rem; border-radius: 0.15rem; font-family: var(--mono); font-size: 0.68rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; background: #17171b; border: 0.0625rem solid #37373a; }
-    .badge-safe { border-color: var(--ok); color: var(--ok); } .badge-warning { border-color: var(--warn); background: rgba(234,111,36,0.14); color: #ffb380; } .badge-critical { border-color: var(--crit); background: rgba(246,65,55,0.18); color: #ff8c85; }
-    .ai-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.4rem; margin-bottom: 0.45rem; }
-    .ai-output { white-space: pre-wrap; max-height: 28vh; overflow-y: auto; background: rgba(11,12,16,0.88); border: 0.0625rem solid #2e2e32; border-radius: 0.25rem; padding: 0.65rem; font-size: 0.78rem; line-height: 1.48; color: var(--text-dim); margin-top: 0.35rem; }
-    .metrics-row, .metrics-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0.38rem; font-size: 0.75rem; margin-top: 0.55rem; }
-    .metric-cell { background: rgba(15,16,20,0.88); border: 0.0625rem solid #2e2e32; border-left: 0.125rem solid var(--nasa-blue); border-radius: 0.2rem; padding: 0.35rem 0.48rem; display: flex; flex-direction: column; gap: 0.08rem; }
-    .bench-list { max-height: 28vh; overflow-y: auto; margin-top: 0.4rem; }
-    .bench-item { padding: 0.42rem 0.35rem; border-bottom: 0.0625rem solid #25282b; font-size: 0.74rem; line-height: 1.38; }
-    .bench-item strong { font-family: var(--mono); color: var(--accent); font-size: 0.7rem; }
-    .status { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); }
+    :root {
+      --bg: #04060b;
+      --hud: rgba(20, 22, 28, 0.8);
+      --hud-hi: rgba(30, 33, 42, 0.92);
+      --border: #37373a;
+      --accent: #288bff;
+      --nasa-blue: #1c67e3;
+      --nasa-red: #f64137;
+      --nasa-red-dark: #b60109;
+      --sand: #cbb296;
+      --text: #ffffff;
+      --text-dim: #d1d1d1;
+      --muted: #959599;
+      --ok: #47da84;
+      --warn: #ea6f24;
+      --crit: #f64137;
+      --mono: "DM Mono", Consolas, monospace;
+      --ease: cubic-bezier(0.2, 0.2, 0, 1);
+      --topo: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cg fill='none' stroke='%23288bff' stroke-opacity='0.14' stroke-width='0.9'%3E%3Cpath d='M-20 40Q40 5 110 45T240 40M-20 95Q55 55 120 100T240 90M-20 155Q45 120 115 160T240 150M-20 205Q60 175 130 210T240 200'/%3E%3Cellipse cx='110' cy='110' rx='68' ry='42'/%3E%3Cellipse cx='110' cy='110' rx='38' ry='22' stroke='%23cbb296' stroke-opacity='0.12'/%3E%3C/g%3E%3C/svg%3E");
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: "Inter", system-ui, sans-serif;
+      background: radial-gradient(circle at 50% 45%, #090d16 0%, #000000 78%);
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+
+    @keyframes topoDrift {
+      0% {
+        background-position: 0 0, 0 0;
+      }
+
+      100% {
+        background-position: 14rem 14rem, 0 0;
+      }
+    }
+
+    .ambient-bg {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .stage {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+    }
+
+    .viewport-grid {
+      display: grid;
+      width: 100%;
+      height: 100%;
+      grid-template-columns: 1fr;
+    }
+
+    .viewport-grid.dual {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .canvas-box {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      overflow: hidden;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .hud-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .hud-layer>* {
+      pointer-events: auto;
+    }
+
+    .hud-surface {
+      background-color: var(--hud);
+      background-image: var(--topo), linear-gradient(135deg, rgba(40, 139, 255, 0.06), rgba(203, 178, 150, 0.03));
+      background-size: 14rem 14rem, 100% 100%;
+      animation: topoDrift 28s linear infinite;
+      border: 0.0625rem solid var(--border);
+      border-radius: 0.375rem;
+      backdrop-filter: blur(0.65rem);
+      transition: background-color 0.25s var(--ease), border-color 0.25s var(--ease);
+    }
+
+    .hud-surface:hover,
+    .hud-surface:focus-within {
+      background-color: var(--hud-hi);
+      border-color: var(--accent);
+    }
+
+    .hud-topbar {
+      position: fixed;
+      top: 0.75rem;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.45rem 0.9rem;
+      max-width: 94vw;
+    }
+
+    .top-main {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .brand-cluster {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+
+    .kicker {
+      font-family: var(--mono);
+      font-size: 0.58rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      display: block;
+    }
+
+    h1 {
+      font-size: 0.92rem;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      font-size: 0.78rem;
+      font-weight: 600;
+      margin: 0 0 0.55rem 0;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      border-left: 0.1875rem solid var(--accent);
+      padding-left: 0.45rem;
+    }
+
+    .top-extra {
+      display: none;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      padding-top: 0.4rem;
+      border-top: 0.0625rem solid #2e2e32;
+      width: 100%;
+    }
+
+    .hud-topbar:hover .top-extra,
+    .hud-topbar:focus-within .top-extra {
+      display: flex;
+    }
+
+    .live-pill {
+      font-family: var(--mono);
+      font-size: 0.64rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 0.16rem 0.45rem;
+      border: 0.0625rem solid var(--nasa-red);
+      border-radius: 0.125rem;
+      background: rgba(246, 65, 55, 0.18);
+    }
+
+    .drawer {
+      position: fixed;
+      top: 4.4rem;
+      bottom: 5.8rem;
+      width: 2.8rem;
+      overflow: hidden;
+      transition: width 0.32s var(--ease), border-color 0.25s var(--ease), background-color 0.25s var(--ease);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .drawer-left {
+      left: 0.75rem;
+    }
+
+    .drawer-right {
+      right: 0.75rem;
+    }
+
+    .drawer:hover,
+    .drawer:focus-within,
+    .drawer.force-open {
+      width: min(23.5rem, 88vw);
+    }
+
+    .drawer-rail {
+      min-height: 100%;
+      width: 2.8rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .drawer-rail span {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    .drawer:hover .drawer-rail,
+    .drawer:focus-within .drawer-rail,
+    .drawer.force-open .drawer-rail,
+    .drawer-body {
+      display: none;
+    }
+
+    .drawer:hover .drawer-body,
+    .drawer:focus-within .drawer-body,
+    .drawer.force-open .drawer-body {
+      display: block;
+      padding: 0.9rem;
+      overflow-y: auto;
+      height: 100%;
+      width: min(23.5rem, 88vw);
+    }
+
+    label {
+      display: block;
+      font-family: var(--mono);
+      font-size: 0.66rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: 0.5rem;
+    }
+
+    input,
+    select,
+    button {
+      width: 100%;
+      padding: 0.42rem 0.6rem;
+      margin-top: 0.2rem;
+      border-radius: 0.2rem;
+      border: 0.0625rem solid #37373a;
+      background: rgba(10, 12, 17, 0.88);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.8rem;
+      transition: border-color 0.2s var(--ease);
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 0.125rem rgba(40, 139, 255, 0.28);
+    }
+
+    input[type="range"] {
+      padding: 0;
+      accent-color: var(--accent);
+      background: transparent;
+      border: none;
+    }
+
+    button {
+      background: var(--nasa-red);
+      border-color: var(--nasa-red);
+      color: var(--text);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      cursor: pointer;
+      margin-top: 0.55rem;
+    }
+
+    button:hover:not(:disabled) {
+      background: var(--nasa-red-dark);
+      border-color: var(--nasa-red-dark);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    button.secondary {
+      background: #1e1e22;
+      border-color: #37373a;
+      color: var(--text-dim);
+      width: auto;
+      text-transform: none;
+      letter-spacing: 0.02em;
+      font-weight: 500;
+      margin-top: 0;
+      padding: 0.34rem 0.58rem;
+    }
+
+    button.secondary:hover:not(:disabled) {
+      background: #2e2e32;
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    button.active {
+      background: var(--nasa-blue);
+      border-color: var(--accent);
+      color: var(--text);
+      box-shadow: inset 0 -0.125rem 0 var(--sand);
+    }
+
+    .row-inline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+      margin-top: 0.35rem;
+    }
+
+    .row-inline>input[type="range"],
+    .row-inline>select {
+      flex: 1;
+    }
+
+    .row-inline>input[type="number"] {
+      width: 4.8rem;
+      font-family: var(--mono);
+    }
+
+    .hud-bottom {
+      position: fixed;
+      bottom: 0.75rem;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(68rem, 94vw);
+      padding: 0.45rem 0.75rem;
+    }
+
+    .chem-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(6.6rem, 1fr));
+      gap: 0.35rem;
+    }
+
+    .chem-card {
+      background: rgba(12, 13, 17, 0.84);
+      border: 0.0625rem solid #2e2e32;
+      border-radius: 0.2rem;
+      padding: 0.32rem 0.48rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.05rem;
+      font-size: 0.74rem;
+    }
+
+    .chem-card .lbl,
+    .metric-cell .lbl {
+      font-family: var(--mono);
+      color: var(--muted);
+      font-size: 0.58rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .chem-card strong,
+    .metric-cell strong {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+
+    .chem-card small {
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      color: var(--muted);
+    }
+
+    .badge-pill {
+      display: inline-block;
+      padding: 0.18rem 0.5rem;
+      border-radius: 0.15rem;
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: #17171b;
+      border: 0.0625rem solid #37373a;
+    }
+
+    .badge-safe {
+      border-color: var(--ok);
+      color: var(--ok);
+    }
+
+    .badge-warning {
+      border-color: var(--warn);
+      background: rgba(234, 111, 36, 0.14);
+      color: #ffb380;
+    }
+
+    .badge-critical {
+      border-color: var(--crit);
+      background: rgba(246, 65, 55, 0.18);
+      color: #ff8c85;
+    }
+
+    .ai-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.45rem;
+    }
+
+    .ai-output {
+      white-space: pre-wrap;
+      max-height: 28vh;
+      overflow-y: auto;
+      background: rgba(11, 12, 16, 0.88);
+      border: 0.0625rem solid #2e2e32;
+      border-radius: 0.25rem;
+      padding: 0.65rem;
+      font-size: 0.78rem;
+      line-height: 1.48;
+      color: var(--text-dim);
+      margin-top: 0.35rem;
+    }
+
+    .metrics-row,
+    .metrics-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.38rem;
+      font-size: 0.75rem;
+      margin-top: 0.55rem;
+    }
+
+    .metric-cell {
+      background: rgba(15, 16, 20, 0.88);
+      border: 0.0625rem solid #2e2e32;
+      border-left: 0.125rem solid var(--nasa-blue);
+      border-radius: 0.2rem;
+      padding: 0.35rem 0.48rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.08rem;
+    }
+
+    .bench-list {
+      max-height: 28vh;
+      overflow-y: auto;
+      margin-top: 0.4rem;
+    }
+
+    .bench-item {
+      padding: 0.42rem 0.35rem;
+      border-bottom: 0.0625rem solid #25282b;
+      font-size: 0.74rem;
+      line-height: 1.38;
+    }
+
+    .bench-item strong {
+      font-family: var(--mono);
+      color: var(--accent);
+      font-size: 0.7rem;
+    }
+
+    .status {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--muted);
+    }
   </style>
 </head>
+
 <body>
   <canvas id="ambient_bg" class="ambient-bg"></canvas>
   <main class="stage">
     <div id="viewportGrid" class="viewport-grid">
-      <div id="viewport_3d" class="canvas-box">Cámara 0G en espera — Abre Controles y pulsa Simular</div>
+      <div id="viewport_3d" class="canvas-box">0G Chamber Standby — Open Controls and click Simulate</div>
       <div id="box2d" class="canvas-box hidden"><canvas id="canvas_2d"></canvas></div>
     </div>
   </main>
@@ -85,62 +549,105 @@
   <div class="hud-layer">
     <header class="hud-topbar hud-surface">
       <div class="top-main">
-        <div class="brand-cluster"><svg width="32" height="27" viewBox="0 0 110 92" aria-label="NASA Emblem"><circle cx="52" cy="46" r="40" fill="#0b3d91"/><path d="M12 60 C40 34, 72 28, 102 18" stroke="#f64137" stroke-width="4.5" fill="none"/><path d="M22 68 L48 20 L62 56 L84 18" stroke="#ffffff" stroke-width="3.2" fill="none" stroke-linejoin="round"/></svg><div><span class="kicker">NASA CIR-0G</span><h1>Simulador de Incendios</h1></div></div>
-        <span class="live-pill">0G</span><button id="btn3d" class="secondary active" type="button">3D</button><button id="btn2d" class="secondary" type="button">2D</button><button id="btnDual" class="secondary" type="button">Dual</button><button id="btnMacro" class="secondary" type="button">Vista Planeta</button><span id="gpuStatus" class="status">Listo</span>
+        <div class="brand-cluster"><svg width="32" height="27" viewBox="0 0 110 92" aria-label="NASA Emblem">
+            <circle cx="52" cy="46" r="40" fill="#0b3d91" />
+            <path d="M12 60 C40 34, 72 28, 102 18" stroke="#f64137" stroke-width="4.5" fill="none" />
+            <path d="M22 68 L48 20 L62 56 L84 18" stroke="#ffffff" stroke-width="3.2" fill="none"
+              stroke-linejoin="round" />
+          </svg>
+          <div><span class="kicker">NASA CIR-0G</span>
+            <h1>Fire Risk Simulator</h1>
+          </div>
+        </div>
+        <span class="live-pill">0G</span><button id="btn3d" class="secondary active" type="button">3D</button><button
+          id="btn2d" class="secondary" type="button">2D</button><button id="btnDual" class="secondary"
+          type="button">Dual</button><button id="btnMacro" class="secondary" type="button">Planet View</button><span
+          id="gpuStatus" class="status">Ready</span>
       </div>
       <div class="top-extra">
         <div id="speciesFilterBar" class="row-inline" style="margin-top:0">
-          <button class="secondary active" type="button" data-sp="all">Todas</button><button class="secondary active" type="button" data-sp="0">Llama</button><button class="secondary active" type="button" data-sp="1">CO2</button><button class="secondary active" type="button" data-sp="2">NOx</button><button class="secondary active" type="button" data-sp="3">Tóxicos</button><button class="secondary active" type="button" data-sp="4">Flujo O2</button>
+          <button class="secondary active" type="button" data-sp="all">All</button><button class="secondary active"
+            type="button" data-sp="0">Flame</button><button class="secondary active" type="button"
+            data-sp="1">CO2</button><button class="secondary active" type="button"
+            data-sp="2">NOx</button><button class="secondary active" type="button"
+            data-sp="3">Toxics</button><button class="secondary active" type="button"
+            data-sp="4">O2 Flow</button>
         </div>
-        <button id="syncBtn" class="secondary" type="button">Actualizar Datos</button>
+        <button id="syncBtn" class="secondary" type="button">Sync Data</button>
       </div>
     </header>
 
-    <aside class="drawer drawer-left hud-surface" aria-label="Parámetros de Combustión">
-      <div class="drawer-rail"><span>⚙ Controles</span></div>
+    <aside class="drawer drawer-left hud-surface" aria-label="Combustion Parameters">
+      <div class="drawer-rail"><span>⚙ Controls</span></div>
       <section class="drawer-body">
-        <h2>Parámetros de Combustión</h2>
+        <h2>Combustion Parameters</h2>
         <form id="simForm">
           <label for="matSelect">Material</label><select id="matSelect" required></select>
-          <label for="env_preset">Entorno / Gravedad</label>
+          <label for="env_preset">Environment / Gravity</label>
           <select id="env_preset">
-            <option value="iss_0g">ISS / Orbital (0g | 14.7 PSI | 21% O2 | 10 cm/s)</option><option value="saffire_exploration">Saffire (0g | 8.2 PSI | 34% O2 | 15 cm/s)</option><option value="drop_tower">Drop Tower (10⁻⁵g | 14.7 PSI | 21% O2 | 5 cm/s)</option><option value="parabolic_flight">Zero-G Flight (0.01g jitter | 14.7 PSI | 21% O2 | 10 cm/s)</option><option value="troposphere">Troposfera (1.0g | 14.7 PSI | 21% O2 | 25 cm/s)</option><option value="stratosphere">Estratosfera (0.99g | 0.8 PSI | 21% O2 | 15 cm/s)</option><option value="mesosphere">Mesosfera (0.97g | 0.1 PSI | 21% O2 | 5 cm/s)</option><option value="thermosphere">Termosfera (0g | 0.1 PSI | 0% O2 | 0 cm/s)</option><option value="mars_038g">Marte (0.38g | 0.09 PSI | 0.13% O2 | 12 cm/s)</option>
+            <option value="iss_0g">ISS / Orbital (0g | 14.7 PSI | 21% O2 | 10 cm/s)</option>
+            <option value="saffire_exploration">Saffire (0g | 8.2 PSI | 34% O2 | 15 cm/s)</option>
+            <option value="drop_tower">Drop Tower (10⁻⁵g | 14.7 PSI | 21% O2 | 5 cm/s)</option>
+            <option value="parabolic_flight">Zero-G Flight (0.01g jitter | 14.7 PSI | 21% O2 | 10 cm/s)</option>
+            <option value="troposphere">Troposphere (1.0g | 14.7 PSI | 21% O2 | 25 cm/s)</option>
+            <option value="stratosphere">Stratosphere (0.99g | 0.8 PSI | 21% O2 | 15 cm/s)</option>
+            <option value="mesosphere">Mesosphere (0.97g | 0.1 PSI | 21% O2 | 5 cm/s)</option>
+            <option value="thermosphere">Thermosphere (0g | 0.1 PSI | 0% O2 | 0 cm/s)</option>
+            <option value="mars_038g">Mars (0.38g | 0.09 PSI | 0.13% O2 | 12 cm/s)</option>
           </select>
           <div class="row-inline">
-            <div style="flex:1"><label for="o2Input">O2 (%)</label><input id="o2Input" type="number" step="any" min="0" max="100" value="21.0" required /></div>
-            <div style="flex:1"><label for="psiInput">PSI</label><input id="psiInput" type="number" step="any" min="0.01" max="50" value="14.7" required /></div>
-            <div style="flex:1"><label for="flowInput">Flujo cm/s</label><input id="flowInput" type="number" step="any" min="0" max="500" value="10.0" required /></div>
+            <div style="flex:1"><label for="o2Input">O2 (%)</label><input id="o2Input" type="number" step="any" min="0"
+                max="100" value="21.0" required /></div>
+            <div style="flex:1"><label for="psiInput">PSI</label><input id="psiInput" type="number" step="any"
+                min="0.01" max="50" value="14.7" required /></div>
+            <div style="flex:1"><label for="flowInput">Flow cm/s</label><input id="flowInput" type="number" step="any"
+                min="0" max="500" value="10.0" required /></div>
           </div>
-          <label for="ignInput">Potencia de Ignición (W)</label>
-          <div class="row-inline"><input id="ignRange" type="range" min="0" max="500" step="5" value="120" /><input id="ignInput" type="number" min="0" max="500" step="5" value="120" required /></div>
-          <label for="llmSelect">Modelo de Análisis</label>
-          <div class="row-inline"><select id="llmSelect"><option value="qwen3.5:9b">qwen3.5:9b (default)</option></select><button id="wakeupBtn" class="secondary" type="button">Activar</button></div>
-          <label class="row-inline" style="margin-top:0.4rem;cursor:pointer;color:var(--text-dim)"><input id="useLlmToggle" type="checkbox" style="width:auto;margin:0" /><span>Análisis automático (apagado = 💤 zzz)</span></label>
-          <label for="ctxInput">Contexto</label><input id="ctxInput" type="text" maxlength="500" placeholder="Ej. cabina presurizada" />
-          <div class="row-inline"><button id="btn_simulate" type="submit" style="flex:1">Simular</button><button id="resetGasBtn" class="secondary" type="button" style="margin-top:0.55rem">Reiniciar</button><button id="exportBtn" class="secondary" type="button" style="margin-top:0.55rem" disabled>Exportar</button></div>
+          <label for="ignInput">Igniter Power (W)</label>
+          <div class="row-inline"><input id="ignRange" type="range" min="0" max="500" step="5" value="120" /><input
+              id="ignInput" type="number" min="0" max="500" step="5" value="120" required /></div>
+          <label for="llmSelect">Analysis Model</label>
+          <div class="row-inline"><select id="llmSelect">
+              <option value="qwen3.5:9b">qwen3.5:9b (default)</option>
+            </select><button id="wakeupBtn" class="secondary" type="button">Wake Up</button></div>
+          <label class="row-inline" style="margin-top:0.4rem;cursor:pointer;color:var(--text-dim)"><input
+              id="useLlmToggle" type="checkbox" style="width:auto;margin:0" /><span>Auto-Analysis
+              (off)</span></label>
+          <label for="ctxInput">Context</label><input id="ctxInput" type="text" maxlength="500"
+            placeholder="e.g. pressurized cabin" />
+          <div class="row-inline"><button id="btn_simulate" type="submit" style="flex:1">Simulate</button><button
+              id="resetGasBtn" class="secondary" type="button" style="margin-top:0.55rem">Reset</button><button
+              id="exportBtn" class="secondary" type="button" style="margin-top:0.55rem" disabled>Export</button></div>
         </form>
-        <div id="resultContainer" class="status" style="margin-top:0.55rem">Esperando ejecución...</div>
+        <div id="resultContainer" class="status" style="margin-top:0.55rem">Awaiting execution...</div>
       </section>
     </aside>
 
-    <aside id="ai_analysis_panel" class="drawer drawer-right hud-surface" aria-label="Análisis y Pruebas">
-      <div class="drawer-rail"><span>◈ Análisis y Pruebas</span></div>
+    <aside id="ai_analysis_panel" class="drawer drawer-right hud-surface" aria-label="Analysis and Benchmarks">
+      <div class="drawer-rail"><span>◈ Analysis &amp; Data</span></div>
       <section class="drawer-body">
         <div id="ai_analysis_box">
-          <div class="ai-header"><h2>Análisis del Experimento</h2><span id="llm_status_badge" class="badge-pill">💤 zzz</span></div>
-          <div id="ai_conclusion_output" class="ai-output">Análisis en reposo (💤 zzz). Activa "Análisis automático" si deseas evaluar la simulación.</div>
+          <div class="ai-header">
+            <h2>Experiment Analysis</h2><span id="llm_status_badge" class="badge-pill"></span>
+          </div>
+          <div id="ai_conclusion_output" class="ai-output">Analysis idle. Enable "Auto-Analysis" to evaluate the
+            simulation.</div>
         </div>
-        <h2 style="margin-top:0.85rem;">Pruebas Históricas NASA</h2>
-        <label for="searchInput">Filtrar por material, código o resultado</label>
-        <input id="searchInput" type="search" placeholder="Buscar ej. pmma, saffire..." />
-        <div id="benchList" class="status bench-list">Cargando pruebas...</div>
+        <h2 style="margin-top:0.85rem;">Historical NASA Tests</h2>
+        <label for="searchInput">Filter by material, code, or outcome</label>
+        <input id="searchInput" type="search" placeholder="Search e.g. pmma, saffire..." />
+        <div id="benchList" class="status bench-list">Loading benchmarks...</div>
       </section>
     </aside>
 
-    <footer id="chemTelemetry" class="hud-bottom hud-surface status">Telemetría química en espera — inicia una simulación para ver gases en vivo.</footer>
+    <footer id="chemTelemetry" class="hud-bottom hud-surface status">Chemical telemetry standby — start a simulation
+      to view live gases.</footer>
   </div>
 
-  <script src="celestial_assets.js"></script><script src="env_scenes.js"></script><script src="render_engines.js"></script><script src="core_abstracts.js"></script>
+  <script src="celestial_assets.js"></script>
+  <script src="env_scenes.js"></script>
+  <script src="render_engines.js"></script>
+  <script src="core_abstracts.js"></script>
   <script>
     (() => {
       const bg = document.getElementById("ambient_bg"), bx = bg.getContext("2d"), mouse = { x: -9e3, y: -9e3, active: false }, dpr = () => Math.min(window.devicePixelRatio || 1, 2);
@@ -171,8 +678,8 @@
         return { materialId: Number(matSel.value), materialName: mat.name || "Cotton Fabric", category: mat.category || "Solid", oxygenPct: Number(document.getElementById("o2Input").value), pressurePsi: Number(document.getElementById("psiInput").value), airflowCms: Number(document.getElementById("flowInput").value), igniterPowerW: Number(ignIn.value), gLevel: env.gLevel, gJitter: env.gJitter, envPreset: envSel.value, useLlm: llmTgl.checked, llmModel: llmTgl.checked ? (llmSel.value || null) : null, queryContext: document.getElementById("ctxInput").value, liveFire, envChanged };
       };
       async function loadMaterials() { const items = await api.request("/materials"); materialsMap = Object.fromEntries(items.map((m) => [m.id, m])); matSel.innerHTML = items.map((m) => `<option value="${m.id}">${escapeXSS(m.name)} (${escapeXSS(m.category)})</option>`).join(""); }
-      async function loadModels() { try { const data = await api.request("/llm-models"), list = data.models && data.models.length ? data.models : [data.active_model || "qwen3.5:9b"]; llmSel.innerHTML = list.map((m) => `<option value="${escapeXSS(m)}">${escapeXSS(m)}</option>`).join(""); } catch (_e) {} }
-      async function loadBenchmarks(q = "") { const items = await api.request(`/benchmarks?q=${encodeURIComponent(q)}`); document.getElementById("benchList").innerHTML = items.length ? items.map((b) => `<div class="bench-item"><strong>[${escapeXSS(b.psi_id)} - ${escapeXSS(b.code)}]</strong> ${escapeXSS(b.material_name)} | O2=${b.oxygen_pct}% | ${b.burn_rate_mms} mm/s | <em>${escapeXSS(b.outcome)}</em></div>`).join("") : "<p>Sin coincidencias.</p>"; }
+      async function loadModels() { try { const data = await api.request("/llm-models"), list = data.models && data.models.length ? data.models : [data.active_model || "qwen3.5:9b"]; llmSel.innerHTML = list.map((m) => `<option value="${escapeXSS(m)}">${escapeXSS(m)}</option>`).join(""); } catch (_e) { } }
+      async function loadBenchmarks(q = "") { const items = await api.request(`/benchmarks?q=${encodeURIComponent(q)}`); document.getElementById("benchList").innerHTML = items.length ? items.map((b) => `<div class="bench-item"><strong>[${escapeXSS(b.psi_id)} - ${escapeXSS(b.code)}]</strong> ${escapeXSS(b.material_name)} | O2=${b.oxygen_pct}% | ${b.burn_rate_mms} mm/s | <em>${escapeXSS(b.outcome)}</em></div>`).join("") : "<p>No matches found.</p>"; }
       envSel.addEventListener("change", () => { const env = ENV_PRESETS[envSel.value] || ENV_PRESETS.iss_0g; document.getElementById("o2Input").value = env.o2; document.getElementById("psiInput").value = env.psi; document.getElementById("flowInput").value = env.flow; ctrl.pushParamsIfActive(readParams(Boolean(ctrl.worker), true)); });
       document.getElementById("speciesFilterBar").addEventListener("click", (e) => { if (e.target.dataset.sp !== undefined) ctrl.toggleSpecies(e.target.dataset.sp); });
       ignR.addEventListener("input", () => { ignIn.value = ignR.value; ctrl.pushParamsIfActive(readParams(true)); }); ignIn.addEventListener("input", () => { ignR.value = ignIn.value; ctrl.pushParamsIfActive(readParams(true)); });
@@ -186,4 +693,5 @@
     })();
   </script>
 </body>
+
 </html>

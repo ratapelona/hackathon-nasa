@@ -72,11 +72,11 @@
       const hex = escapeXSS(d.flame_color_hex || "#f59e0b");
       this.container.innerHTML = `<div class="${layoutMode === "compact" ? "metrics-col" : "metrics-row"}">
         ${cell("Material", escapeXSS(d.material_name))}
-        ${cell("Riesgo", `${escapeXSS(d.calculated_risk_score)} / 100`)}
-        ${cell("Velocidad Vf", `${escapeXSS(d.predicted_burn_rate_mms)} mm/s`)}
-        ${cell("Régimen", escapeXSS(d.outcome_prediction))}
-        ${cell("Llama 3D", `<span style="color:${hex}">●</span> ${hex} (${escapeXSS(d.sphere_radius_scale)}x)`)}
-        ${cell("Fuente", d.cache_hit ? "En memoria" : "Calculado")}</div>`;
+        ${cell("Risk", `${escapeXSS(d.calculated_risk_score)} / 100`)}
+        ${cell("Burn Rate Vf", `${escapeXSS(d.predicted_burn_rate_mms)} mm/s`)}
+        ${cell("Regime", escapeXSS(d.outcome_prediction))}
+        ${cell("3D Flame", `<span style="color:${hex}">●</span> ${hex} (${escapeXSS(d.sphere_radius_scale)}x)`)}
+        ${cell("Source", d.cache_hit ? "Cached" : "Computed")}</div>`;
     }
   }
 
@@ -117,7 +117,7 @@
         const reg = !s.isIgnited ? (s.igniterPowerW > 0 ? "PREHEATING" : "EXTINGUISHED") : s.oxygenPct >= 50 || s.propagationSpeedMms >= 6 ? "ACCELERATED_PLASMA" : "STEADY_PROPAGATION";
         this.simCard.update({ material_name: s.materialName, calculated_risk_score: risk, predicted_burn_rate_mms: s.propagationSpeedMms, outcome_prediction: reg, flame_color_hex: s.flameColorHex, sphere_radius_scale: s.sphereRadiusScale, cache_hit: Boolean(this.lastReport?.cache_hit) });
       }
-      if (m.type === "RENDER_MODE") this.gpuStatus.textContent = "Simulación en vivo";
+      if (m.type === "RENDER_MODE") this.gpuStatus.textContent = "Live Simulation";
     }
     toggleSpecies(sp) {
       if (sp === "all") { const allOn = !this.filter.every(Boolean); this.filter = [allOn, allOn, allOn, allOn, allOn]; } else { const idx = Number(sp); if (idx >= 0 && idx < 5) this.filter[idx] = !this.filter[idx]; }
@@ -137,7 +137,7 @@
     }
     async ensure3D(envPreset, zoom = false) {
       if (!this.r3d && window.NasaRenderers?.ThreeJSFlameRenderer) {
-        if (!this.r3dReady) { const r = new window.NasaRenderers.ThreeJSFlameRenderer(); r.setFilter(this.filter); if (envPreset) r.setEnvironment(envPreset, false); this.r3dReady = r.init(this.viewport3d).then(() => { this.r3d = r; if (this.lastTelemetry) r.render(this.lastTelemetry); this.gpuStatus.textContent = "Vista 3D lista"; return r; }); }
+        if (!this.r3dReady) { const r = new window.NasaRenderers.ThreeJSFlameRenderer(); r.setFilter(this.filter); if (envPreset) r.setEnvironment(envPreset, false); this.r3dReady = r.init(this.viewport3d).then(() => { this.r3d = r; if (this.lastTelemetry) r.render(this.lastTelemetry); this.gpuStatus.textContent = "3D View Ready"; return r; }); }
         await this.r3dReady;
       }
       if (this.r3d && envPreset) { const chg = envPreset !== this.lastEnvPreset; this.lastEnvPreset = envPreset; this.r3d.setEnvironment(envPreset, zoom || chg); }
@@ -150,27 +150,27 @@
     toggleMacroView() { return this.r3d ? this.r3d.toggleMacroView() : false; }
     resetChamber() { if (this.worker) this.worker.postMessage({ type: "RESET_CHAMBER" }); if (this.r3d) this.r3d.resetCamera(); }
     setModelSleepState(armed = false) {
-      this.llmBadge.className = "badge-pill"; this.llmBadge.textContent = armed ? "Listo" : "💤 zzz";
-      if (!armed) this.llmOutput.textContent = "Análisis en reposo (💤 zzz). La simulación física corre en vivo sin consultar al modelo.";
+      this.llmBadge.className = "badge-pill"; this.llmBadge.textContent = armed ? "Ready" : "💤 zzz";
+      if (!armed) this.llmOutput.textContent = "Analysis idle (💤 zzz). Physics simulation runs live without querying the model.";
     }
     async sendSimulationToModel(params) {
-      this.llmBadge.className = "badge-pill badge-warning"; this.llmBadge.textContent = "⏳ Analizando..."; const t0 = performance.now();
+      this.llmBadge.className = "badge-pill badge-warning"; this.llmBadge.textContent = "⏳ Analyzing..."; const t0 = performance.now();
       try {
         const data = await this.api.request("/simulate", { method: "POST", body: JSON.stringify({ material_id: params.materialId, custom_oxygen_pct: params.oxygenPct, custom_pressure_psi: params.pressurePsi, custom_airflow: params.airflowCms, query_context: params.queryContext || "", llm_model: params.llmModel || null }) });
-        const elapsed = ((performance.now() - t0) / 1000).toFixed(2), refs = `Referencias NASA: [${(data.sqlite_pointer_ids || []).join(", ")}]`;
-        this.lastReport = data; this.exportBtn.disabled = false; this.llmBadge.className = "badge-pill badge-safe"; this.llmBadge.textContent = `✅ Listo (${elapsed}s)`;
-        this.llmOutput.textContent = `${data.ai_conclusion_text}\n\n---\nMaterial: ${data.material_name} | Riesgo: ${data.calculated_risk_score}/100 | Vf: ${data.predicted_burn_rate_mms} mm/s (${data.outcome_prediction})\n${refs}`;
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2), refs = `NASA References: [${(data.sqlite_pointer_ids || []).join(", ")}]`;
+        this.lastReport = data; this.exportBtn.disabled = false; this.llmBadge.className = "badge-pill badge-safe"; this.llmBadge.textContent = `✅ Ready (${elapsed}s)`;
+        this.llmOutput.textContent = `${data.ai_conclusion_text}\n\n---\nMaterial: ${data.material_name} | Risk: ${data.calculated_risk_score}/100 | Vf: ${data.predicted_burn_rate_mms} mm/s (${data.outcome_prediction})\n${refs}`;
         this.simCard.update(data); if (this.worker) this.worker.postMessage({ type: "SYNC_BACKEND_TRUTH", data });
       } catch (err) {
-        this.llmBadge.className = "badge-pill badge-critical"; this.llmBadge.textContent = "⚠️ Modo Local";
-        this.llmOutput.textContent = `Sin conexión con el servidor (${err.message}). La simulación física continúa en vivo.`;
+        this.llmBadge.className = "badge-pill badge-critical"; this.llmBadge.textContent = "⚠️ Local Mode";
+        this.llmOutput.textContent = `Server offline (${err.message}). Live physics simulation continues.`;
       }
     }
     async runSimulation(params) {
       if (!this.worker) { this.worker = new Worker("physics_worker.js"); this.worker.onmessage = (e) => this._onWorkerMsg(e.data); }
       const sizes = { s2d: this._measureBox(this.box2d) }, msg = { type: "START_SIMULATION", params, viewMode: this.viewMode, filter: this.filter, sizes };
       if (!this.transferred) { this.transferred = true; const off2d = this.canvas2d.transferControlToOffscreen(); this.worker.postMessage({ ...msg, canvas2d: off2d }, [off2d]); this._watchResizes(); } else { this.worker.postMessage(msg); }
-      await this.ensure3D(params.envPreset, true); if (this.r3d) this.gpuStatus.textContent = "Simulación en vivo";
+      await this.ensure3D(params.envPreset, true); if (this.r3d) this.gpuStatus.textContent = "Live Simulation";
       if (params.useLlm === false) { this.setModelSleepState(false); return; } else { await this.sendSimulationToModel(params); }
     }
   }
