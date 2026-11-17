@@ -3,7 +3,7 @@
 Interactive 3D/2D microgravity combustion simulator and NASA Physical Sciences Informatics (PSI) benchmark analyzer.
 
 ## Live Demo (Vercel)
-- **URL:** https://express-plateau-7x4wz87.tmp.now *(claimable via Vercel dashboard / importable directly from this repo)*
+- **URL:** https://hackathon-five-silk.vercel.app
 
 ## Local Run
 ```bash

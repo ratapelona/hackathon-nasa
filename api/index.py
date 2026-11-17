@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import Body, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -173,3 +174,8 @@ def wakeup_llm_models(_: dict[str, Any] | None = Body(default=None)) -> dict[str
 @app.post("/api/sync-diff")
 def sync_data_and_diff() -> dict[str, Any]:
     return {"status": "synced", "mode": "vercel_serverless"}
+
+
+frontend_dir = ROOT_DIR / "frontend"
+if frontend_dir.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend_root")
